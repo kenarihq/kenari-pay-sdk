@@ -23,7 +23,7 @@ examples/poll.rs      a complete poll loop (feature `reqwest`)
 ```
 
 Gates: `cargo build --locked`, `cargo clippy --all-targets --all-features -- -D warnings`,
-`cargo test --all-features` (113 tests, 9 of them doc tests), `cargo test` with no features (102),
+`cargo test --all-features` (125 tests, 9 of them doc tests), `cargo test` with no features (112),
 and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. Build with
 `CARGO_PROFILE_DEV_DEBUG=0` and a target directory of your choice, the full debug build is large.
 
