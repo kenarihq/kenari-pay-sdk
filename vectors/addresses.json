@@ -1,0 +1,162 @@
+[
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x000000000000000000000000000000000000dEaD",
+    "fee_bps": 0,
+    "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "address": "0x8cBa0f1f4351c2561B9c9b339b67F038E33e027D"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
+    "fee_bps": 300,
+    "salt": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "address": "0xAeb178B769c2CaFed16FA0827C0e0e9FBCc1a773"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x00bF029bB0Cb6bbf4b0F805593e3b466F5b6A455",
+    "fee_bps": 1,
+    "salt": "0x0000000000000000000000000000000000000000000000000000000000000001",
+    "address": "0x64853aCbabDa4112a0afEB94A8bab6Ef7FEc8922"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0x0000EA03C6927f8c3F27c15149F722272dD0148A",
+    "fee_bps": 299,
+    "salt": "0x0000000000000000b7baafd723f8065d9961f7cb3f48ae195f791427407a106a",
+    "address": "0x7174987c245d84D74F99D655271fD0BB45120F3a"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x000000001f96ac854B371fA1a73cdfF30ed79A61",
+    "fee_bps": 100,
+    "salt": "0x77867cb80eae87291794b929860f7558ac57fd60ee895a4d238de8ceedf462e9",
+    "address": "0x3825A9db1E0638B5650D41CE873D11b015911d13"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0x000000000000000000000000aDF9CFA8Cf6F506b",
+    "fee_bps": 250,
+    "salt": "0xea2eac6e6084c08d4096d95cf24e3ff83d2f04f26cd19e7f1319318f830a7155",
+    "address": "0x8C747F10a8656104d62d9EE4843923618E824A20"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0xb577f3803833D939e9F76bDe1A2bF04952c00000",
+    "fee_bps": 50,
+    "salt": "0x9ec2dcf969814f12443cc04197bd7821dcfeb552864e61c1ede5f374a2d05276",
+    "address": "0x54D0eA3cFDfFD1811aAF612e866C98241bC8Bf91"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0x9318995BfBD5D3bcF606Cdf3014d28439fc4326b",
+    "fee_bps": 150,
+    "salt": "0xfce3c3802eb9d948a858109313c13eb4c0593a5e6793582aa14274ed1eb730ac",
+    "address": "0xEA8986fEa6632D4Be6a33e0F61821D595045232A"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x9b90d75814868781b932846438e3f5b47fc490e6",
+    "fee_bps": 200,
+    "salt": "0x1bc75c72ffe3856a0fd6be1c830daf76e5968de5f334abf041cce0ae3a37d123",
+    "address": "0x83DCF3EeefCAC5214a46A4380aa38Fd6dFCf3b18"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0xA1374dc6D90153467EF1074b81F212d2d1B1e195",
+    "fee_bps": 25,
+    "salt": "0x05e3ecb05c6cf29a279c08857795ef51da4ec7cf353ccce6cd2e3fc23c3ae0e1",
+    "address": "0x609bf1C3f0494C62555Ad2266664428eAB4688F8"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x4d9D1358Dc0252Ea396EF65d74B5DaFF48702E7c",
+    "fee_bps": 0,
+    "salt": "0x9040747a4d6066c64d38c00cd8db59cc5f0644877f4c03b6eb0e71b6fc3ebfb0",
+    "address": "0x5bd2160e9C07B5e02ec0f87e7Be90AeaE23e3d79"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0x15B06857dD1C850786c00CB20657A603323ac77c",
+    "fee_bps": 300,
+    "salt": "0xa9a284cf57a68ced6c032d82b59cb48a9a29e0cbea98801e3b6432d7b7af1eae",
+    "address": "0x712A30e76ABeCD3531bac72096eC318042286d53"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x2De3Ec5159dbDB5991ce1813970d48d812467F4a",
+    "fee_bps": 1,
+    "salt": "0x35233f21c33abd068491b46180eb0a0d74fc7a4eac86768cf5be45e6dd8d4763",
+    "address": "0x24eF6FAC1ADD466F0E96f6053d5b2488e312820f"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0xeF16f08edf6919D20cCEA033261216BE4DA10361",
+    "fee_bps": 299,
+    "salt": "0x20cbc2617aad850af67f89f057e8438a1cc722eaa77ed012743bd93e13ccc606",
+    "address": "0x1b5a23F14725583c7b0C62e6C1dFa86932f3db61"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x51172359525A5Bf32DE698012Be58d2E5A1917bf",
+    "fee_bps": 100,
+    "salt": "0x949a0a74a1907d1e52d55f717aca40f4ab457e7cf4a216220e4cf65cf5bcac60",
+    "address": "0x8f171D0a0308BFc2FAf2c8Fd8AC6CFa75A14Bcca"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0xd9Fa2153b9d9d6d2bFB47De799859ED4025D0b7d",
+    "fee_bps": 250,
+    "salt": "0xc69d0b75b1efa5bc87fab8dfa119c53b8e30813b83c34916060b551693abcbcb",
+    "address": "0x0D4C17B79B8C877124f11fA89fa0A8BF718FF416"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x7987690d7851132256e02713aC8021Be6aC4c32a",
+    "fee_bps": 50,
+    "salt": "0x1934a7b1aa36f4ae79540009f8d93027989101d0b5abcd591e82495c0a536652",
+    "address": "0xcbd16f10646D82d9F6c77015c9858EB4C0C7681b"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0x7b80B25B9e255399927e5DD09122ce0daee62c59",
+    "fee_bps": 150,
+    "salt": "0xa39061adc76f0d21f6b950970e91194c7c78584be44c784b3859f59b98bc9fc1",
+    "address": "0xEB40461e35adD2332b27fF8a3390b414Dc5f601E"
+  },
+  {
+    "factory": "0x2c31D74aa21c84F499d68C2a2493CF157479fa18",
+    "implementation": "0x00c7D03d9c7201Aeaf31Faa224543f09948E9514",
+    "payout": "0x491c7E50454CB1e45A04666Ce56cA4bBe9ea0cFc",
+    "fee_bps": 200,
+    "salt": "0xa9159982de28b2c506e3884922f47361d513998caba25391e290bd9b2e1716f3",
+    "address": "0x0053F83448509bFd9E361252D9677E83A31F52Bd"
+  },
+  {
+    "factory": "0x711A089a2F4cC702F078c657a2CD1A252a558aDD",
+    "implementation": "0x9213e7D5a99c0C24f515640b6190B286e3035E8D",
+    "payout": "0xB321b5e4b7037699e0BF5b2296Dcb6B7E6B7a839",
+    "fee_bps": 25,
+    "salt": "0xa7678e29025304246b7508442bf0ce121d744c6cd59eee19f6b55a0b3c8c35b9",
+    "address": "0x001eA172697d08b67ba6B8ed4d7D11AF311A5d90"
+  }
+]

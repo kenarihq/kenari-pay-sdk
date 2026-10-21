@@ -1,0 +1,37 @@
+{
+  "livemode": true,
+  "networks": [
+    {
+      "chain": "solana",
+      "family": "solana",
+      "name": "Solana",
+      "assets": [
+        {
+          "asset": "solana:usdc",
+          "symbol": "USDC",
+          "contract": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "decimals": 6,
+          "min_units": "1000000"
+        }
+      ],
+      "confirm_hint_secs": 30,
+      "explorer_tx_url": "https://solscan.io/tx/{tx}"
+    },
+    {
+      "chain": "base",
+      "family": "evm",
+      "name": "Base",
+      "assets": [
+        {
+          "asset": "base:usdc",
+          "symbol": "USDC",
+          "contract": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals": 6,
+          "min_units": "1000000"
+        }
+      ],
+      "confirm_hint_secs": 180,
+      "explorer_tx_url": "https://basescan.org/tx/{tx}"
+    }
+  ]
+}

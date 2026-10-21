@@ -1,0 +1,45 @@
+[package]
+name = "kenari-pay-sdk"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97"
+description = "Merchant SDK for the kenari-pay deposit gateway: wire types, address check, webhook check and request building."
+readme = "README.md"
+repository = "https://github.com/kenarihq/kenari-pay-sdk"
+license = "MIT OR Apache-2.0"
+publish = false
+keywords = ["kenari-pay", "stablecoin", "deposits", "usdc"]
+categories = ["api-bindings", "cryptography::cryptocurrencies"]
+include = [
+    "/src",
+    "/vectors",
+    "/examples",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+]
+
+[features]
+default = []
+# The ready made HTTP client over reqwest. Off by default: the rest of the crate never opens a connection.
+reqwest = ["dep:reqwest"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha3 = "0.10"
+ed25519-dalek = "2"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+subtle = "2"
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+
+[[example]]
+name = "poll"
+required-features = ["reqwest"]

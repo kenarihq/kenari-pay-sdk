@@ -1,0 +1,23 @@
+{
+  "note": "TEST VECTOR ONLY. The attestation secret is bytes 0..31 and must never be used outside tests. Addresses are the pool entries the keys tool derives from the standard test mnemonic (abandon x11 about), verified by the keys derivation tests. Attestation format v2 binds the key epoch.",
+  "attest_secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "attest_pubkey_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "entries": [
+    {
+      "family": "evm",
+      "key_epoch": 1,
+      "pool_index": 0,
+      "address": "0x9858effd232b4033e47d90003d41ec34ecaeda94",
+      "message": "kenari-pay:attest:v2:1:evm:0:0x9858effd232b4033e47d90003d41ec34ecaeda94",
+      "signature_hex": "3549dc5b900c6e48a0eb09a951cf216d83a1231d2f7e805c8ce2e01864fe693bc27bf136559929c8227d7485d4d4d9d10d8e58e109fb3d02e87b82251eb2620d"
+    },
+    {
+      "family": "solana",
+      "key_epoch": 1,
+      "pool_index": 0,
+      "address": "HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk",
+      "message": "kenari-pay:attest:v2:1:solana:0:HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk",
+      "signature_hex": "1e4ebb5f7c41ea31dcbcbce44c34a2585709c3857b8047b1775e9486e57c87c1b878a1db70802cf0dbb2cf938fb389e425801b10b402faca6db07e2117f71d05"
+    }
+  ]
+}

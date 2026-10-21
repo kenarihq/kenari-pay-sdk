@@ -1,0 +1,32 @@
+{
+  "keys": [
+    {
+      "key_epoch": 1,
+      "attest_pubkey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "status": "retired",
+      "created_at": 1760690000,
+      "pool": {
+        "evm": {
+          "size": 10000,
+          "allocated": 10000
+        },
+        "solana": {
+          "size": 10000,
+          "allocated": 812
+        }
+      }
+    },
+    {
+      "key_epoch": 2,
+      "attest_pubkey": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+      "status": "active",
+      "created_at": 1760699000,
+      "pool": {
+        "evm": {
+          "size": 10000,
+          "allocated": 12
+        }
+      }
+    }
+  ]
+}

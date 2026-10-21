@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "pool_exhausted",
+    "message": "no unallocated address left in the evm pool"
+  }
+}

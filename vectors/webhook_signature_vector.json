@@ -1,0 +1,6 @@
+{
+  "secret": "whsec_test_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+  "timestamp": 1760700000,
+  "raw_body": "{\"id\":\"evt_01JAXF3K9V0QH2M7Z5R8T4W6YB\",\"type\":\"deposit.confirmed\",\"created_at\":1760700000,\"data\":{\"deposit_id\":\"dep_01JAXF2Q8N3M6P9R1T4V7X0Z2B\",\"key\":\"base:0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060:12\",\"seq\":42}}",
+  "header": "t=1760700000,v1=a1074a2b7d9722b34cbd3e1c63d094dc3c1b78fbba8da21beb8b07f1904a9735"
+}

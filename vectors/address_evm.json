@@ -1,0 +1,31 @@
+{
+  "id": "adr_01JAXEZ7Q4K2M8N5P1R3T6V9WB",
+  "customer_ref": "usr_acc_7f3a",
+  "family": "evm",
+  "address": "0x9858effd232b4033e47d90003d41ec34ecaeda94",
+  "kind": "pool",
+  "forwarder": null,
+  "key_epoch": 1,
+  "pool_index": 0,
+  "attestation": "3549dc5b900c6e48a0eb09a951cf216d83a1231d2f7e805c8ce2e01864fe693bc27bf136559929c8227d7485d4d4d9d10d8e58e109fb3d02e87b82251eb2620d",
+  "networks": [
+    {
+      "chain": "base",
+      "family": "evm",
+      "name": "Base",
+      "assets": [
+        {
+          "asset": "base:usdc",
+          "symbol": "USDC",
+          "contract": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals": 6,
+          "min_units": "1000000"
+        }
+      ],
+      "confirm_hint_secs": 180,
+      "explorer_tx_url": "https://basescan.org/tx/{tx}"
+    }
+  ],
+  "livemode": true,
+  "created_at": 1760699000
+}

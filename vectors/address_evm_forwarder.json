@@ -1,0 +1,37 @@
+{
+  "id": "adr_01JAXEZ7Q4K2M8N5P1R3T6V9WC",
+  "customer_ref": "usr_acc_7f3a",
+  "family": "evm",
+  "address": "0x2793975f02ea0402393e0c3ea30c51264276927e",
+  "kind": "forwarder",
+  "forwarder": {
+    "factory": "0x7bd6793b424c8e01dd7dce50364db20a9587db54",
+    "implementation": "0x7539fadbe11298643551a501358b138e01efe3f0",
+    "payout": "0xeb1aaeefe4370f06e25bc4bf41e6dc3807fa6dc1",
+    "fee_bps": 50,
+    "salt": "0x33d071691f040a4f949fdf84bf0cfb0fdd344bd08ccfaa6dcb4ce96cb48e43aa"
+  },
+  "key_epoch": null,
+  "pool_index": null,
+  "attestation": null,
+  "networks": [
+    {
+      "chain": "base-sepolia",
+      "family": "evm",
+      "name": "Base Sepolia",
+      "assets": [
+        {
+          "asset": "base-sepolia:usdc",
+          "symbol": "USDC",
+          "contract": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+          "decimals": 6,
+          "min_units": "100000"
+        }
+      ],
+      "confirm_hint_secs": 180,
+      "explorer_tx_url": "https://sepolia.basescan.org/tx/{tx}"
+    }
+  ],
+  "livemode": false,
+  "created_at": 1760699000
+}

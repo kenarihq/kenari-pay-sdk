@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "family": "evm",
+  "key_epoch": 1,
+  "attest_pubkey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "entries": [
+    {
+      "pool_index": 0,
+      "address": "0x9858effd232b4033e47d90003d41ec34ecaeda94",
+      "attestation": "3549dc5b900c6e48a0eb09a951cf216d83a1231d2f7e805c8ce2e01864fe693bc27bf136559929c8227d7485d4d4d9d10d8e58e109fb3d02e87b82251eb2620d"
+    },
+    {
+      "pool_index": 1,
+      "address": "0x6fac4d18c912343bf86fa7049364dd4e424ab9c0",
+      "attestation": "eb0da4c45b1ab644395c3849975a6edc2fd63b781b6f9f7aa2787da3d54a093ac1e18de0453ebbd955e9497d4eeb8a77eec00ae62964e62d96d39a986cc20c0f"
+    }
+  ]
+}
