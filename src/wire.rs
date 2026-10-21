@@ -113,7 +113,7 @@ pub enum EventType {
     #[serde(rename = "deposit.reverted")]
     DepositReverted,
     /// An event type this SDK does not know. Answer 2xx and ignore it.
-    #[serde(other)]
+    #[serde(other, rename = "unknown")]
     Unknown,
 }
 
@@ -399,10 +399,10 @@ pub struct ErrorDetail {
     pub message: String,
 }
 
-/// The ids a webhook body carries. It carries nothing else on purpose, so act on a re-fetch of
+/// The ids a deposit webhook carries. It carries nothing else on purpose, so act on a re-fetch of
 /// the deposit and never on the webhook.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WebhookData {
+pub struct DepositRef {
     /// `dep_...`
     pub deposit_id: String,
     /// The deposit key to re-fetch with `GET /v1/deposits/{key}`.
@@ -412,7 +412,17 @@ pub struct WebhookData {
 }
 
 /// A webhook event, after [`crate::webhook::verify`] has checked its signature.
+///
+/// The envelope (`id`, `type`, `created_at`) is read first, and the ids of a deposit only for a
+/// `deposit.*` type. So an event of a type this SDK does not know is still an event, with
+/// [`EventType::Unknown`] and no `deposit`, whatever its `data` holds. Answer it 2xx and ignore it.
+/// A deposit type whose `data` is not `deposit_id`, `key` and `seq` is not an event at all, and
+/// fails to decode.
+///
+/// An `Unknown` event keeps nothing of its type and its `data`, so it serializes as the envelope
+/// with the type `unknown` and no `data`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawWebhookEvent")]
 pub struct WebhookEvent {
     /// `evt_...`
     pub id: String,
@@ -421,8 +431,44 @@ pub struct WebhookEvent {
     pub event_type: EventType,
     /// When the event was made, in unix seconds.
     pub created_at: i64,
-    /// The ids.
-    pub data: WebhookData,
+    /// The ids of the deposit, `Some` for every deposit type and `None` for
+    /// [`EventType::Unknown`]. On the wire this is `data`.
+    #[serde(rename = "data", skip_serializing_if = "Option::is_none")]
+    pub deposit: Option<DepositRef>,
+}
+
+/// The envelope of a webhook with its `data` still unread, so the type decides how `data` is read.
+#[derive(Deserialize)]
+struct RawWebhookEvent {
+    id: String,
+    #[serde(rename = "type")]
+    event_type: EventType,
+    created_at: i64,
+    #[serde(default)]
+    data: serde_json::Value,
+}
+
+impl TryFrom<RawWebhookEvent> for WebhookEvent {
+    type Error = &'static str;
+
+    fn try_from(raw: RawWebhookEvent) -> Result<WebhookEvent, Self::Error> {
+        let deposit = match raw.event_type {
+            EventType::DepositDetected
+            | EventType::DepositConfirmed
+            | EventType::DepositOrphaned
+            | EventType::DepositReverted => Some(
+                serde_json::from_value(raw.data)
+                    .map_err(|_| "a deposit event needs data with deposit_id, key and seq")?,
+            ),
+            EventType::Unknown => None,
+        };
+        Ok(WebhookEvent {
+            id: raw.id,
+            event_type: raw.event_type,
+            created_at: raw.created_at,
+            deposit,
+        })
+    }
 }
 
 /// Size and use of one family's pool within a key epoch.

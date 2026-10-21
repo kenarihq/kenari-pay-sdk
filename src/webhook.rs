@@ -24,8 +24,9 @@
 //!
 //! let event = webhook::verify(header, body, secret, now).unwrap();
 //! assert_eq!(event.event_type, EventType::DepositConfirmed);
-//! // Now re-fetch `event.data.key` and act on that.
-//! assert_eq!(event.data.seq, 42);
+//! // Now re-fetch `deposit.key` and act on that.
+//! let deposit = event.deposit.as_ref().unwrap();
+//! assert_eq!(deposit.seq, 42);
 //! ```
 
 use hmac::{Hmac, Mac};
@@ -46,7 +47,8 @@ pub enum WebhookError {
     Stale,
     /// The signature does not match, or the secret is empty.
     Mismatch,
-    /// The signature is right and the body is not a webhook event.
+    /// The signature is right and the body is not a webhook event: the envelope is incomplete, or
+    /// a `deposit.*` event has no deposit ids in its `data`.
     Body,
 }
 
@@ -68,9 +70,12 @@ impl std::error::Error for WebhookError {}
 /// `signature_header` is the value of `Kenari-Pay-Signature`, `raw_body` the exact bytes of the
 /// request body before any parsing, `secret` the merchant's webhook secret and `now` the
 /// merchant's own clock in unix seconds. The signature is checked first and the body is read only
-/// when it holds, so nothing in an unsigned body is parsed. An event type this SDK does not know
-/// is [`EventType::Unknown`](crate::wire::EventType::Unknown) and still a success, so answer 2xx
-/// and ignore it.
+/// when it holds, so nothing in an unsigned body is parsed.
+///
+/// An event type this SDK does not know is [`EventType::Unknown`](crate::wire::EventType::Unknown)
+/// with no `deposit`, and still a success whatever its `data` holds, so answer 2xx and ignore it.
+/// A `deposit.*` event whose `data` is not `deposit_id`, `key` and `seq` is
+/// [`WebhookError::Body`].
 pub fn verify(
     signature_header: &str,
     raw_body: &[u8],

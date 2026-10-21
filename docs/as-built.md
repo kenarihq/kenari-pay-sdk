@@ -175,7 +175,18 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
 - A key that appears twice in the header is taken at its last value, as kenari does.
 - `WebhookError::Body` is added for a body that is signed and is not an event. The signature is
   checked first, so an unsigned body is never parsed.
-- An event type the SDK does not know is a success with `EventType::Unknown`.
+- An event type the SDK does not know is a success with `EventType::Unknown`, whatever its `data`
+  holds, as `docs/api.md` and the plan promise (answer 2xx and ignore it). The envelope (`id`,
+  `type`, `created_at`) is decoded first and the deposit ids only for a `deposit.*` type.
+  `WebhookEvent::deposit` is `Option<DepositRef>` (the former `WebhookData`, renamed because it is
+  the ids of a deposit and not the data of every event), `Some` for the four deposit types and
+  `None` for `Unknown`. A deposit type whose `data` is missing, null or not `deposit_id`, `key`
+  and `seq` is still `WebhookError::Body`. An unknown type that carries deposit shaped data is
+  `None` too, because only a `deposit.*` type says its data is deposit ids. `WebhookEvent` reads
+  through a private envelope type (`#[serde(try_from)]`) and still derives `Serialize`: a deposit
+  event writes its ids as `data`, an `Unknown` event writes the envelope with the type `unknown`
+  and no `data`, since it keeps nothing of either. `EventType::Unknown` now serializes as
+  `unknown` like the other `Unknown` variants (it wrote `Unknown` before).
 - `verify_signature` (the check alone) and `sign` (the header for a body, to test a handler) are
   public additions. A header signed with an empty secret is refused whatever it is checked against.
 

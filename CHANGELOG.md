@@ -21,6 +21,8 @@ The first version of the merchant SDK for kenari-pay.
   `forwarder::address`, `forwarder::salt` and `pins::BASE_SEPOLIA`.
 - `webhook`: `verify` with the `t=<unix>,v1=<hex>` header, HMAC-SHA256, a constant time compare, a
   300 s tolerance and an empty secret that refuses every webhook.
+  An event of a type the SDK does not know verifies whatever its `data` holds, with
+  `WebhookEvent::deposit` as `None`. The deposit ids are read only for a `deposit.*` type.
 - `feed`: `Cursor` for the deposit and sweep feeds and the rule for advancing it.
 - `vectors/`: byte copies of the gateway's `contract/*.json` and `contracts/vectors/addresses.json`,
   and `scripts/sync-vectors.sh` to refresh them.

@@ -163,15 +163,16 @@ A complete loop over `reqwest` is in `examples/poll.rs`. Run it with
 
 ```rust
 use kenari_pay_sdk::webhook::{self, WebhookError};
-use kenari_pay_sdk::wire::EventType;
 
 /// `signature` is the `Kenari-Pay-Signature` header, `body` the raw request body before any
 /// parsing, `secret` your `whsec_...` and `now` your own clock in unix seconds.
 fn on_webhook(signature: &str, body: &[u8], secret: &str, now: i64) -> Result<(), WebhookError> {
     let event = webhook::verify(signature, body, secret, now)?;
-    if event.event_type != EventType::Unknown {
-        // The body carries ids only. Re-fetch `event.data.key` and act on that.
+    if let Some(deposit) = &event.deposit {
+        // The body carries ids only. Re-fetch `deposit.key` and act on that.
+        let _key = &deposit.key;
     }
+    // `deposit` is `None` for an event type this SDK does not know. Ignore it and answer 2xx.
     Ok(()) // answer 2xx fast
 }
 ```

@@ -169,9 +169,10 @@ fn every_example_decodes_into_its_wire_type_and_round_trips() {
 
     let event: WebhookEvent = round_trip("webhook_deposit_confirmed.json", WEBHOOK_BODY);
     assert_eq!(event.event_type, EventType::DepositConfirmed);
-    assert_eq!(event.data.key, deposit.key);
-    assert_eq!(event.data.deposit_id, deposit.id);
-    assert_eq!(event.data.seq, deposit.seq);
+    let refs = event.deposit.as_ref().unwrap();
+    assert_eq!(refs.key, deposit.key);
+    assert_eq!(refs.deposit_id, deposit.id);
+    assert_eq!(refs.seq, deposit.seq);
 }
 
 #[test]

@@ -35,8 +35,9 @@ fn the_gateways_vector_verifies_and_reads_as_the_example_event() {
     assert_eq!(event.id, "evt_01JAXF3K9V0QH2M7Z5R8T4W6YB");
     assert_eq!(event.event_type, EventType::DepositConfirmed);
     assert_eq!(event.created_at, 1_760_700_000);
-    assert_eq!(event.data.deposit_id, "dep_01JAXF2Q8N3M6P9R1T4V7X0Z2B");
-    assert_eq!(event.data.seq, 42);
+    let deposit = event.deposit.as_ref().unwrap();
+    assert_eq!(deposit.deposit_id, "dep_01JAXF2Q8N3M6P9R1T4V7X0Z2B");
+    assert_eq!(deposit.seq, 42);
     // The body of the vector is the example file, and both read the same.
     assert_eq!(v.body, BODY_EXAMPLE.trim_end());
     let example: WebhookEvent = serde_json::from_str(BODY_EXAMPLE).unwrap();
@@ -300,15 +301,103 @@ fn the_signature_is_checked_before_the_body_is_read() {
     }
 }
 
+/// Verify a body signed with the vector's secret.
+fn verified(body: &str) -> Result<WebhookEvent, WebhookError> {
+    let v = vector();
+    let header = webhook::sign(&v.secret, v.ts, body.as_bytes());
+    webhook::verify(&header, body.as_bytes(), &v.secret, v.ts)
+}
+
 #[test]
 fn an_event_type_from_a_newer_gateway_still_verifies_and_reads_as_unknown() {
-    let v = vector();
-    let body = r#"{"id":"evt_9","type":"sweep.confirmed","created_at":5,"data":{"deposit_id":"dep_9","key":"k","seq":9},"added":true}"#;
-    let header = webhook::sign(&v.secret, v.ts, body.as_bytes());
-    let event = webhook::verify(&header, body.as_bytes(), &v.secret, v.ts).unwrap();
+    // The case the plan promises: any `data`, because the data of a type is that type's own.
+    let body = r#"{"id":"evt_9","type":"sweep.confirmed","created_at":5,"data":{"sweep_id":"swp_1","seq":9}}"#;
+    let event = verified(body).unwrap();
     assert_eq!(event.event_type, EventType::Unknown);
     assert_eq!(event.id, "evt_9");
-    assert_eq!(event.data.seq, 9);
+    assert_eq!(event.created_at, 5);
+    assert_eq!(event.deposit, None);
+
+    // Whatever else the data of an unknown type is, or whether it is there at all.
+    for data in [
+        r#","data":{}"#,
+        r#","data":null"#,
+        r#","data":5"#,
+        r#","data":"text""#,
+        r#","data":[1,2]"#,
+        r#","data":{"deposit_id":7,"key":null}"#,
+        "",
+    ] {
+        let body = format!(
+            r#"{{"id":"evt_9","type":"sweep.confirmed","created_at":5{data},"added":true}}"#
+        );
+        let event = verified(&body).unwrap_or_else(|e| panic!("{body}: {e:?}"));
+        assert_eq!(event.event_type, EventType::Unknown, "{body}");
+        assert_eq!(event.deposit, None, "{body}");
+    }
+
+    // Data that looks like a deposit's, under a type this SDK does not know, is still not read as
+    // one: only a `deposit.*` type says its data is deposit ids.
+    let body = r#"{"id":"evt_9","type":"deposit.refunded","created_at":5,"data":{"deposit_id":"dep_9","key":"k","seq":9}}"#;
+    let event = verified(body).unwrap();
+    assert_eq!(event.event_type, EventType::Unknown);
+    assert_eq!(event.deposit, None);
+
+    // The envelope is still needed for an event of any type.
+    for body in [
+        r#"{"type":"sweep.confirmed","created_at":5,"data":{}}"#,
+        r#"{"id":"evt_9","type":"sweep.confirmed","data":{}}"#,
+        r#"{"id":"evt_9","created_at":5,"data":{}}"#,
+        r#"{"id":9,"type":"sweep.confirmed","created_at":5}"#,
+        r#"{"id":"evt_9","type":"sweep.confirmed","created_at":"5"}"#,
+        r#"{"id":"evt_9","type":7,"created_at":5}"#,
+    ] {
+        assert_eq!(verified(body), Err(WebhookError::Body), "{body}");
+    }
+}
+
+#[test]
+fn a_deposit_type_whose_data_is_not_deposit_shaped_is_still_a_body_error() {
+    for word in [
+        "deposit.detected",
+        "deposit.confirmed",
+        "deposit.orphaned",
+        "deposit.reverted",
+    ] {
+        for data in [
+            r#","data":{"sweep_id":"swp_1","seq":9}"#,
+            r#","data":{"deposit_id":"dep_1","seq":1}"#,
+            r#","data":{"deposit_id":"dep_1","key":"k"}"#,
+            r#","data":{"deposit_id":1,"key":"k","seq":1}"#,
+            r#","data":{"deposit_id":"dep_1","key":"k","seq":"1"}"#,
+            r#","data":{}"#,
+            r#","data":null"#,
+            r#","data":[]"#,
+            r#","data":"dep_1""#,
+            "",
+        ] {
+            let body = format!(r#"{{"id":"evt_1","type":"{word}","created_at":1{data}}}"#);
+            assert_eq!(verified(&body), Err(WebhookError::Body), "{body}");
+        }
+    }
+}
+
+#[test]
+fn an_unknown_event_serializes_as_its_envelope_and_a_deposit_event_keeps_its_data() {
+    let unknown =
+        verified(r#"{"id":"evt_9","type":"sweep.confirmed","created_at":5,"data":{"x":1}}"#)
+            .unwrap();
+    assert_eq!(
+        serde_json::to_value(&unknown).unwrap(),
+        serde_json::json!({"id": "evt_9", "type": "unknown", "created_at": 5})
+    );
+    let example: WebhookEvent = serde_json::from_str(BODY_EXAMPLE).unwrap();
+    let value = serde_json::to_value(&example).unwrap();
+    assert_eq!(
+        value,
+        serde_json::from_str::<serde_json::Value>(BODY_EXAMPLE).unwrap()
+    );
+    assert_eq!(value["data"]["seq"], 42);
 }
 
 #[test]
@@ -326,13 +415,24 @@ fn every_event_type_of_the_docs_reads() {
         let header = webhook::sign(&v.secret, v.ts, body.as_bytes());
         let event = webhook::verify(&header, body.as_bytes(), &v.secret, v.ts).unwrap();
         assert_eq!(event.event_type, want, "{word}");
+        // Every deposit type carries the ids, and only those types do.
+        let deposit = event.deposit.as_ref().unwrap();
+        assert_eq!(
+            (
+                deposit.deposit_id.as_str(),
+                deposit.key.as_str(),
+                deposit.seq
+            ),
+            ("dep_1", "k", 1),
+            "{word}"
+        );
     }
 }
 
 #[test]
 fn the_error_texts_are_fixed_and_hold_nothing_of_the_request() {
     let v = vector();
-    let body = r#"{"id":"LEAK","type":"LEAK","created_at":1,"data":{}}"#;
+    let body = r#"{"id":"LEAK","type":"deposit.confirmed","created_at":1,"data":{}}"#;
     let header = webhook::sign(&v.secret, v.ts, body.as_bytes());
     let errors = [
         webhook::verify(&header, body.as_bytes(), &v.secret, v.ts).unwrap_err(),
