@@ -33,7 +33,7 @@ fn a_read_is_a_get_with_the_key_and_no_body() {
         (api().networks(), "/v1/networks"),
         (api().keys(), "/v1/keys"),
         (
-            api().deposit("dep_01JAXF2Q8N3M6P9R1T4V7X0Z2B"),
+            api().deposit("dep_01JAXF2Q8N3M6P9R1T4V7X0Z2B").unwrap(),
             "/v1/deposits/dep_01JAXF2Q8N3M6P9R1T4V7X0Z2B",
         ),
         (
@@ -42,7 +42,7 @@ fn a_read_is_a_get_with_the_key_and_no_body() {
         ),
         (api().sweeps(0, 500), "/v1/sweeps?after_seq=0&limit=500"),
         (
-            api().customer_deposits("usr_acc_7f3a", 10),
+            api().customer_deposits("usr_acc_7f3a", 10).unwrap(),
             "/v1/customers/usr_acc_7f3a/deposits?limit=10",
         ),
     ];
@@ -87,7 +87,7 @@ fn a_write_is_a_post_with_a_json_body_and_its_content_type() {
 
 #[test]
 fn a_reissue_is_a_post_with_no_body_and_so_no_content_type() {
-    let request = api().reissue("adr_01JAXEZ7Q4K2M8N5P1R3T6V9WB");
+    let request = api().reissue("adr_01JAXEZ7Q4K2M8N5P1R3T6V9WB").unwrap();
     assert_eq!(request.method, Method::Post);
     assert_eq!(
         request.url,
@@ -101,19 +101,19 @@ fn a_reissue_is_a_post_with_no_body_and_so_no_content_type() {
 fn a_path_value_stays_one_path_segment() {
     // A deposit key has colons, a customer ref can hold anything.
     let key = "base:0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060:12";
-    let request = api().deposit(key);
+    let request = api().deposit(key).unwrap();
     assert_eq!(
         request.url,
         format!(
             "{BASE}/v1/deposits/base%3A0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060%3A12"
         )
     );
-    let request = api().customer_deposits("a/b?c=d#e f", 5);
+    let request = api().customer_deposits("a/b?c=d#e f", 5).unwrap();
     assert_eq!(
         request.url,
         format!("{BASE}/v1/customers/a%2Fb%3Fc%3Dd%23e%20f/deposits?limit=5")
     );
-    let request = api().reissue("../keys");
+    let request = api().reissue("../keys").unwrap();
     assert_eq!(
         request.url,
         format!("{BASE}/v1/addresses/..%2Fkeys/reissue")
@@ -122,6 +122,59 @@ fn a_path_value_stays_one_path_segment() {
     let nasty = "a\"b\\c\nd\u{e9}\u{1f600}";
     let request = api().create_address(nasty, Family::Evm);
     assert_eq!(body_json(&request)["customer_ref"], nasty);
+}
+
+#[test]
+fn a_dot_segment_is_refused_by_every_call_that_takes_a_path_value() {
+    // `/v1/customers/../deposits` collapses to `/v1/deposits` in every URL parser, the feed of
+    // every customer, and it decodes as a page. So no request is built for it.
+    for value in ["", ".", ".."] {
+        assert_eq!(
+            api().customer_deposits(value, 10),
+            Err(ApiError::Argument),
+            "customer_deposits {value:?}"
+        );
+        assert_eq!(
+            api().deposit(value),
+            Err(ApiError::Argument),
+            "deposit {value:?}"
+        );
+        assert_eq!(
+            api().reissue(value),
+            Err(ApiError::Argument),
+            "reissue {value:?}"
+        );
+    }
+    // The refusal is fixed text and holds no value.
+    assert_eq!(
+        ApiError::Argument.to_string(),
+        "request argument cannot be a path segment"
+    );
+}
+
+#[test]
+fn a_value_that_looks_encoded_stays_one_encoded_segment() {
+    // `%2e%2e` is `..` to a URL parser. Its `%` is encoded, so it stays text.
+    let request = api().customer_deposits("%2e%2e", 10).unwrap();
+    assert_eq!(
+        request.url,
+        format!("{BASE}/v1/customers/%252e%252e/deposits?limit=10")
+    );
+    let request = api().deposit("%2E%2E").unwrap();
+    assert_eq!(request.url, format!("{BASE}/v1/deposits/%252E%252E"));
+    let request = api().reissue(".%2e").unwrap();
+    assert_eq!(request.url, format!("{BASE}/v1/addresses/.%252e/reissue"));
+    // A value with a slash is one segment, never two.
+    let request = api().customer_deposits("a/b", 10).unwrap();
+    assert_eq!(
+        request.url,
+        format!("{BASE}/v1/customers/a%2Fb/deposits?limit=10")
+    );
+    let request = api().customer_deposits("../..", 10).unwrap();
+    assert_eq!(
+        request.url,
+        format!("{BASE}/v1/customers/..%2F../deposits?limit=10")
+    );
 }
 
 #[test]

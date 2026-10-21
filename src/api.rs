@@ -89,9 +89,9 @@ impl std::fmt::Debug for HttpRequest {
     }
 }
 
-/// Why an answer is not the wire type that was asked for. The `Display` text is fixed, so no text
-/// of the gateway reaches a merchant's customer through `to_string()`. The detail is in `Debug`,
-/// for a server log.
+/// Why a request cannot be built, or why an answer is not the wire type that was asked for. The
+/// `Display` text is fixed, so no text of the gateway and no value the merchant passed reaches a
+/// merchant's customer through `to_string()`. The detail is in `Debug`, for a server log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
     /// The gateway answered with a status that is not 2xx. The message of the body is never kept,
@@ -104,6 +104,11 @@ pub enum ApiError {
     },
     /// A 2xx body that is not the documented shape. The text is the parser's, for a log.
     Decode(String),
+    /// A value given to a call cannot be one path segment: it is empty, `.` or `..`. A dot segment
+    /// is collapsed by every URL parser, so `/v1/customers/../deposits` would reach
+    /// `/v1/deposits`, the merchant wide feed. No request is built, and the value is not kept
+    /// here.
+    Argument,
 }
 
 impl std::fmt::Display for ApiError {
@@ -111,6 +116,7 @@ impl std::fmt::Display for ApiError {
         match self {
             ApiError::Status { code, .. } => write!(f, "gateway answered {code}"),
             ApiError::Decode(_) => f.write_str("gateway answer unreadable"),
+            ApiError::Argument => f.write_str("request argument cannot be a path segment"),
         }
     }
 }
@@ -136,9 +142,18 @@ impl std::fmt::Debug for Api {
     }
 }
 
-/// Every byte outside the RFC 3986 unreserved set becomes `%XX`, so a deposit key
-/// (`chain:tx_hash:event_index`) or a `customer_ref` stays one path segment whatever it holds.
-fn encode_path_segment(raw: &str) -> String {
+/// One path segment from a merchant's value. Every byte outside the RFC 3986 unreserved set
+/// becomes `%XX`, so a deposit key (`chain:tx_hash:event_index`) or a `customer_ref` stays one
+/// segment whatever it holds, and the `%` of a value that already looks encoded is encoded too,
+/// so `%2e%2e` stays text and never becomes a dot segment.
+///
+/// An empty value, `.` and `..` are refused with [`ApiError::Argument`], because they are the
+/// only values that are a dot segment after encoding, and a URL parser collapses a dot segment
+/// out of the path.
+fn encode_path_segment(raw: &str) -> Result<String, ApiError> {
+    if raw.is_empty() || raw == "." || raw == ".." {
+        return Err(ApiError::Argument);
+    }
     let mut out = String::with_capacity(raw.len() + 8);
     for b in raw.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
@@ -147,7 +162,7 @@ fn encode_path_segment(raw: &str) -> String {
             out.push_str(&format!("%{b:02X}"));
         }
     }
-    out
+    Ok(out)
 }
 
 /// A body that is plain wire data. It cannot fail to serialize, because it holds only text,
@@ -223,16 +238,24 @@ impl Api {
 
     /// `POST /v1/addresses/{id}/reissue`: move the customer to a fresh address of the model that
     /// applies now. Decode with [`Address`](crate::wire::Address). The old address stays watched.
-    pub fn reissue(&self, address_id: &str) -> HttpRequest {
-        let path = format!("/v1/addresses/{}/reissue", encode_path_segment(address_id));
-        self.post(&path, None)
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::Argument`] when `address_id` is empty, `.` or `..`.
+    pub fn reissue(&self, address_id: &str) -> Result<HttpRequest, ApiError> {
+        let path = format!("/v1/addresses/{}/reissue", encode_path_segment(address_id)?);
+        Ok(self.post(&path, None))
     }
 
     /// `GET /v1/deposits/{id_or_key}`: one deposit by `dep_...` id or by its key, the re-fetch to
     /// do before acting on any webhook. Decode with [`Api::decode_optional`] for a
     /// [`Deposit`](crate::wire::Deposit), because a 404 means there is no such deposit.
-    pub fn deposit(&self, id_or_key: &str) -> HttpRequest {
-        self.get(&format!("/v1/deposits/{}", encode_path_segment(id_or_key)))
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::Argument`] when `id_or_key` is empty, `.` or `..`.
+    pub fn deposit(&self, id_or_key: &str) -> Result<HttpRequest, ApiError> {
+        Ok(self.get(&format!("/v1/deposits/{}", encode_path_segment(id_or_key)?)))
     }
 
     /// `GET /v1/deposits?after_seq=&limit=`: the change feed, ascending by `seq`. `limit` is 1 to
@@ -245,11 +268,21 @@ impl Api {
     /// `GET /v1/customers/{customer_ref}/deposits?limit=`: the customer's newest deposits, newest
     /// first. `limit` is 1 to 50 and the gateway's default is 10. Decode with
     /// [`CustomerDeposits`](crate::wire::CustomerDeposits).
-    pub fn customer_deposits(&self, customer_ref: &str, limit: u32) -> HttpRequest {
-        self.get(&format!(
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::Argument`] when `customer_ref` is empty, `.` or `..`. Without that refusal
+    /// `..` would render `/v1/customers/../deposits`, which a URL parser collapses to
+    /// `/v1/deposits`, the feed of every customer.
+    pub fn customer_deposits(
+        &self,
+        customer_ref: &str,
+        limit: u32,
+    ) -> Result<HttpRequest, ApiError> {
+        Ok(self.get(&format!(
             "/v1/customers/{}/deposits?limit={limit}",
-            encode_path_segment(customer_ref)
-        ))
+            encode_path_segment(customer_ref)?
+        )))
     }
 
     /// `GET /v1/sweeps?after_seq=&limit=`: what the sweeper moved into the payout wallet, ascending
@@ -325,16 +358,92 @@ mod tests {
             ("evm key", "base:0xabc:12", "base%3A0xabc%3A12"),
             ("unreserved kept", "AZaz09-._~", "AZaz09-._~"),
             ("slash", "a/b", "a%2Fb"),
+            ("slash alone", "/", "%2F"),
+            ("dot dot slash", "../keys", "..%2Fkeys"),
             ("space and percent", "a b%", "a%20b%25"),
             ("query and fragment", "a?b#c", "a%3Fb%23c"),
-            ("dot dot", "..", ".."),
-            ("non ascii", "é", "%C3%A9"),
-            ("empty", "", ""),
+            ("backslash", "a\\b", "a%5Cb"),
+            ("non ascii", "\u{e9}", "%C3%A9"),
             ("newline", "a\nb", "a%0Ab"),
             ("plus and at", "a+b@c", "a%2Bb%40c"),
+            // Three dots and a dot inside a word are ordinary segments.
+            ("three dots", "...", "..."),
+            ("dot in a word", "a.b", "a.b"),
+            ("dot space", ". ", ".%20"),
+            // A value that already looks percent encoded keeps its `%` as text, so it can never
+            // decode to a dot segment in a URL parser.
+            ("encoded dots", "%2e%2e", "%252e%252e"),
+            ("encoded dots upper", "%2E%2E", "%252E%252E"),
+            ("one encoded dot", "%2e", "%252e"),
+            ("dot then encoded dot", ".%2e", ".%252e"),
+            ("encoded dot then dot", "%2e.", "%252e."),
         ];
         for (name, raw, want) in cells {
-            assert_eq!(encode_path_segment(raw), *want, "encode cell `{name}`");
+            assert_eq!(
+                encode_path_segment(raw).as_deref(),
+                Ok(*want),
+                "encode cell `{name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_or_dot_segment_is_refused() {
+        for (name, raw) in [("empty", ""), ("dot", "."), ("dot dot", "..")] {
+            assert_eq!(
+                encode_path_segment(raw),
+                Err(ApiError::Argument),
+                "refusal cell `{name}`"
+            );
+        }
+    }
+
+    /// What a URL parser does to a rendered path: drop `.` segments and let `..` remove the
+    /// segment before it, the WHATWG rule that reqwest's `url`, curl and browsers all follow, with
+    /// `%2e` counted as a dot. A rendered path must come out with every segment still there.
+    fn collapse(path: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for segment in path.split('/').skip(1) {
+            match segment.to_ascii_lowercase().as_str() {
+                "." | "%2e" => {}
+                ".." | ".%2e" | "%2e." | "%2e%2e" => {
+                    out.pop();
+                }
+                _ => out.push(segment.to_string()),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn no_value_makes_a_rendered_path_collapse() {
+        let api = Api::new("https://pay.kenari.id", "kp_test_x");
+        let values = [
+            "", ".", "..", "...", "%2e", "%2e%2e", ".%2e", "%2e.", "%2E%2E", "a/..", "../..", "/",
+            "a/b", "..\\", "./", "\t.", ".\n.",
+        ];
+        for value in values {
+            let rendered = [
+                api.customer_deposits(value, 10),
+                api.deposit(value),
+                api.reissue(value),
+            ];
+            for request in rendered {
+                let Ok(request) = request else {
+                    assert!(matches!(value, "" | "." | ".."), "{value:?} was refused");
+                    continue;
+                };
+                let path = request
+                    .url
+                    .strip_prefix("https://pay.kenari.id")
+                    .unwrap()
+                    .split('?')
+                    .next()
+                    .unwrap()
+                    .to_string();
+                let want = path.split('/').skip(1).count();
+                assert_eq!(collapse(&path).len(), want, "{value:?} rendered {path}");
+            }
         }
     }
 

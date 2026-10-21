@@ -162,14 +162,17 @@ impl Client {
             .await
     }
 
-    /// `POST /v1/addresses/{id}/reissue`. Run [`crate::address::verify`] on the answer.
+    /// `POST /v1/addresses/{id}/reissue`. Run [`crate::address::verify`] on the answer. An empty,
+    /// `.` or `..` id is refused before anything is sent, as [`ApiError::Argument`] in
+    /// [`ClientError::Api`].
     pub async fn reissue(&self, address_id: &str) -> Result<Address, ClientError> {
-        self.call(self.api.reissue(address_id)).await
+        self.call(self.api.reissue(address_id)?).await
     }
 
-    /// `GET /v1/deposits/{id_or_key}`, with a 404 as `Ok(None)`.
+    /// `GET /v1/deposits/{id_or_key}`, with a 404 as `Ok(None)`. An empty, `.` or `..` value is
+    /// refused before anything is sent, as [`ApiError::Argument`] in [`ClientError::Api`].
     pub async fn deposit(&self, id_or_key: &str) -> Result<Option<Deposit>, ClientError> {
-        let (status, body) = self.send(self.api.deposit(id_or_key)).await?;
+        let (status, body) = self.send(self.api.deposit(id_or_key)?).await?;
         Ok(Api::decode_optional(status, &body)?)
     }
 
@@ -178,13 +181,14 @@ impl Client {
         self.call(self.api.deposits(after_seq, limit)).await
     }
 
-    /// `GET /v1/customers/{customer_ref}/deposits?limit=`.
+    /// `GET /v1/customers/{customer_ref}/deposits?limit=`. An empty, `.` or `..` customer ref is
+    /// refused before anything is sent, as [`ApiError::Argument`] in [`ClientError::Api`].
     pub async fn customer_deposits(
         &self,
         customer_ref: &str,
         limit: u32,
     ) -> Result<CustomerDeposits, ClientError> {
-        self.call(self.api.customer_deposits(customer_ref, limit))
+        self.call(self.api.customer_deposits(customer_ref, limit)?)
             .await
     }
 

@@ -261,6 +261,27 @@ async fn a_redirect_is_not_followed_and_the_key_goes_nowhere_else() {
 }
 
 #[tokio::test]
+async fn a_dot_segment_is_refused_before_anything_is_sent() {
+    // The server must never be asked: `/v1/customers/../deposits` would reach the feed of every
+    // customer once a URL parser collapsed it.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client = Client::new(&format!("http://{}", listener.local_addr().unwrap()), KEY).unwrap();
+    let want = ClientError::Api(ApiError::Argument);
+    for value in ["", ".", ".."] {
+        assert_eq!(client.customer_deposits(value, 10).await.unwrap_err(), want);
+        assert_eq!(client.deposit(value).await.unwrap_err(), want);
+        assert_eq!(client.reissue(value).await.unwrap_err(), want);
+    }
+    assert_eq!(
+        want.to_string(),
+        "request argument cannot be a path segment"
+    );
+    thread::sleep(Duration::from_millis(100));
+    assert!(listener.accept().is_err(), "a request was sent");
+}
+
+#[tokio::test]
 async fn a_connection_that_cannot_be_made_is_a_transport_error_without_the_key_or_the_url() {
     // A port nobody listens on.
     let port = TcpListener::bind("127.0.0.1:0")
