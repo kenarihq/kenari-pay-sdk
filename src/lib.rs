@@ -4,6 +4,8 @@
 
 pub mod address;
 pub mod api;
+#[cfg(feature = "reqwest")]
+pub mod client;
 pub mod feed;
 pub mod webhook;
 pub mod wire;
