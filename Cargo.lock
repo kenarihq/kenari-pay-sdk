@@ -547,6 +547,7 @@ dependencies = [
 name = "kenari-pay-sdk"
 version = "0.1.0"
 dependencies = [
+ "curve25519-dalek",
  "ed25519-dalek",
  "hex",
  "hmac",

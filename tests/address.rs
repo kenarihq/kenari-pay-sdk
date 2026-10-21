@@ -874,3 +874,16 @@ fn a_refusal_names_the_rule_with_a_fixed_text_and_never_the_gateways_words() {
     // The 15 rules read as 15 different texts.
     assert_eq!(texts.len(), 15);
 }
+
+#[test]
+fn the_trust_error_texts_are_fixed_and_carry_no_semicolon() {
+    for error in [
+        TrustError::Address,
+        TrustError::Checksum,
+        TrustError::Key,
+        TrustError::WeakKey,
+    ] {
+        let text = error.to_string();
+        assert!(!text.is_empty() && !text.contains(';'), "{text}");
+    }
+}

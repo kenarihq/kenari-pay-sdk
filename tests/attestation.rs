@@ -208,3 +208,51 @@ fn canonical_address_cells() {
         );
     }
 }
+
+#[test]
+fn a_signature_with_a_small_order_r_is_refused_though_it_verifies_non_strictly() {
+    // The test key of the vector is bytes 0..31, so a signature can be made by hand. Take R as the
+    // identity point, a point of order 1, and S = k * a with k = H(R, A, M). Then S*B = R + k*A holds,
+    // so `verify` accepts it, and only `verify_strict` refuses a small order R.
+    use curve25519_dalek::scalar::{clamp_integer, Scalar};
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use sha2::{Digest, Sha512};
+
+    let v: serde_json::Value = serde_json::from_str(ATTESTATION_VECTOR).unwrap();
+    let pk_hex = v["attest_pubkey_hex"].as_str().unwrap();
+    let a_bytes: [u8; 32] = hex::decode(pk_hex).unwrap().try_into().unwrap();
+    let address = v["entries"][0]["address"].as_str().unwrap();
+    let message = attestation_message(1, Family::Evm, 0, address);
+
+    let seed: Vec<u8> = (0u8..32).collect();
+    let h = Sha512::digest(&seed);
+    let a = Scalar::from_bytes_mod_order(clamp_integer(h[..32].try_into().unwrap()));
+    let mut r = [0u8; 32];
+    r[0] = 1; // y = 1 is the identity point
+    let k = Scalar::from_hash(
+        Sha512::new()
+            .chain_update(r)
+            .chain_update(a_bytes)
+            .chain_update(message.as_bytes()),
+    );
+    let s = k * a;
+    let mut sig = [0u8; 64];
+    sig[..32].copy_from_slice(&r);
+    sig[32..].copy_from_slice(s.as_bytes());
+
+    // `verify` accepting it shows the signature is well made, so only the strictness refuses it.
+    let key = VerifyingKey::from_bytes(&a_bytes).unwrap();
+    let forged = Signature::from_bytes(&sig);
+    assert!(
+        key.verify(message.as_bytes(), &forged).is_ok(),
+        "non strict accepts it"
+    );
+    assert!(
+        key.verify_strict(message.as_bytes(), &forged).is_err(),
+        "strict refuses a small order R"
+    );
+    assert!(
+        !verify_attestation(pk_hex, 1, Family::Evm, 0, address, &hex::encode(sig)),
+        "the SDK refuses it"
+    );
+}
