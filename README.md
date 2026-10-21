@@ -123,7 +123,8 @@ fn process(deposit: &Deposit) -> Result<(), String> {
         // Credit once per `deposit.key`, only when confirmed and not below the minimum.
         DepositStatus::Confirmed if !deposit.below_minimum => {
             let _units = deposit.amount_units().ok_or("amount is not a number")?;
-            // Re-fetch it with `api.deposit(&deposit.key)` first, then credit.
+            // Re-fetch it with `api.deposit(&deposit.key)` first. Check that the re-fetched
+            // `livemode` is your mode and that `simulated` is false on live, then credit.
             Ok(())
         }
         // Never debit on a reverted deposit without a person. Alert instead.
@@ -184,7 +185,13 @@ the gateway and not that the body is true, so never act on the body.
 ### 6. Credit rules
 
 - Credit a deposit once per `key`, only when its `status` is `confirmed` and `below_minimum` is
-  false, and only after a re-fetch.
+  false, and only after a re-fetch. Check the re-fetched deposit, not the page that listed it.
+- Its `livemode` must be the mode you run in. An object from the other network is never money of
+  this one.
+- `simulated` is `true` only for a deposit made with `POST /v1/sandbox/deposits`. It has no
+  transaction on any chain, so never credit it on live. The live gateway always says `false`, so a
+  `simulated` deposit there means something is wrong: stop and alert a person. On the sandbox you
+  may credit it like a real one, which is how you test your flow.
 - `detected` and `orphaned` are not creditable. `orphaned` can come back to `detected`.
 - `reverted` means a confirmed deposit vanished. Alert a person and never debit automatically.
 - A status or event type the SDK does not know decodes to `Unknown`. Never credit it, and put it

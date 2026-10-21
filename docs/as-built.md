@@ -120,8 +120,18 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
   (a customer ref sits in some paths). `Display` is fixed.
 - `Client::send` takes a rendered `HttpRequest`, for a call the typed methods do not cover, and
   `Client::api()` gives the builder.
-- The default client reads the proxy settings of the environment, as `reqwest` does. The tests talk
-  to the loopback interface and so need it not to be proxied, which `NO_PROXY` normally says.
+- The default client reads the proxy variables of the environment (`HTTP_PROXY`, `HTTPS_PROXY`,
+  `ALL_PROXY` and `NO_PROXY`, in upper or lower case) and does not read the operating system's own
+  proxy settings. Both halves were checked and not assumed. `reqwest` 0.12 with
+  `default-features = false` has its `system-proxy` feature off, and that feature only adds the
+  macOS and Windows settings. The variables are read whatever the features are: `reqwest` 0.12.28,
+  the version in `Cargo.lock`, builds its proxy matcher from the environment unless the client
+  calls `no_proxy()`, and a run of `default_http()` with `HTTP_PROXY` pointing at a loopback
+  listener sent its request to that listener. An HTTPS call through such a proxy is a `CONNECT`
+  tunnel, so the proxy never sees the key. Plain http is only for tests and local fakes, which
+  talk to the loopback interface and so need it not to be proxied, which `NO_PROXY` normally says.
+  A merchant that wants no proxy at all builds its own client with `no_proxy()` and passes it to
+  `Client::with_http`.
 
 ## address
 
@@ -224,3 +234,13 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
 - The README snippets were run once against the vectors and `examples/poll.rs` against a local
   fake gateway (one credit, the cursor stored, a sandbox key refusing live objects). The README
   snippets are compiled as doc tests on every run and not executed.
+- `examples/poll.rs` checks the re-fetched deposit as it checks the page: its `livemode` must be
+  the mode of the key, and `simulated` must be false on live. It stops at the first deposit that
+  fails either check, like any other failure. A sandbox key credits a simulated deposit, as the
+  README says. This was run against a local fake gateway for six cells: a live deposit that
+  credits, a re-fetch that turns simulated, a re-fetch from the other network, a simulated
+  deposit on the sandbox that credits, a simulated page item on live, and a live object on a
+  sandbox key.
+- The review fix round was mutation checked the same way: the path segment refusal, the percent
+  encoding, the loopback host test, the user info guard, the unknown type branch of the webhook
+  and the EVM only chain list were each removed in turn, and each made a test fail.

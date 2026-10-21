@@ -14,7 +14,8 @@
 //! The rules it follows are the ones of `kenari_pay_sdk::feed`: the cursor advances only after a
 //! deposit has been handled, and the loop stops at the first deposit that fails, so the next pass
 //! reads it again. Only a deposit that is `confirmed` and not `below_minimum` is credited, and only
-//! after a re-fetch of it. A `reverted` deposit is never debited, a person is told.
+//! after a re-fetch of it, whose `livemode` must be the mode of the key and whose `simulated` must
+//! be false on live. A `reverted` deposit is never debited, a person is told.
 //!
 //! This is an example. It keeps the cursor in a file and the credited keys in memory. A real
 //! merchant stores both in its database, the key under a unique constraint and the cursor in the
@@ -40,6 +41,19 @@ enum Handled {
     Retry(String),
 }
 
+/// Why a deposit is not money of the network this merchant runs on, when it is not. A deposit from
+/// the other network never is. A simulated one (made with `POST /v1/sandbox/deposits`, no
+/// transaction on any chain) is never credited on live, and the live gateway never makes one.
+fn not_ours(deposit: &Deposit, livemode: bool) -> Option<&'static str> {
+    if deposit.livemode != livemode {
+        Some("is from the other network")
+    } else if deposit.simulated && livemode {
+        Some("is simulated and this is live")
+    } else {
+        None
+    }
+}
+
 fn read_cursor(path: &PathBuf) -> i64 {
     // A missing or unreadable file is the start of the feed, which idempotent crediting allows.
     std::fs::read_to_string(path)
@@ -63,8 +77,8 @@ async fn handle(
     deposit: &Deposit,
 ) -> Handled {
     // An object from the other network is never money of this one.
-    if deposit.livemode != livemode {
-        return Handled::Retry(format!("{} is from the other network", deposit.key));
+    if let Some(why) = not_ours(deposit, livemode) {
+        return Handled::Retry(format!("{} {why}", deposit.key));
     }
     match deposit.status {
         DepositStatus::Detected => {
@@ -105,6 +119,10 @@ async fn handle(
                     return Handled::Retry(format!("re-fetch of {} failed: {error}", deposit.key))
                 }
             };
+            // The re-fetched object is the one to act on, so it gets the same check as the page.
+            if let Some(why) = not_ours(&fresh, livemode) {
+                return Handled::Retry(format!("{} {why} on re-fetch", deposit.key));
+            }
             if fresh.status != DepositStatus::Confirmed || fresh.below_minimum {
                 // It moved since the page was made. A later feed item says where it went.
                 println!("{} is no longer creditable, skipping", deposit.key);
