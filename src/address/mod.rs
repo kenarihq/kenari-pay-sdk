@@ -19,6 +19,31 @@
 //!
 //! A **pool** address passes only when its attestation verifies under the key the merchant holds
 //! for its key epoch. Any other kind is refused.
+//!
+//! ```
+//! use kenari_pay_sdk::address::{self, pins, Expect, Refusal, Trust};
+//! use kenari_pay_sdk::wire::{Address, Family};
+//!
+//! // The forwarder example of the gateway, as it answers `POST /v1/addresses` on the sandbox.
+//! let text = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/vectors/address_evm_forwarder.json"));
+//! let answer: Address = serde_json::from_str(text).unwrap();
+//!
+//! let trust = Trust::new()
+//!     .chains(["base-sepolia"])
+//!     .pin("base-sepolia", pins::BASE_SEPOLIA)
+//!     .payouts(Family::Evm, ["0xeb1aaeefe4370f06e25bc4bf41e6dc3807fa6dc1"])
+//!     .unwrap();
+//! let expect = Expect::new("usr_acc_7f3a", Family::Evm, false);
+//!
+//! let verified = address::verify(&answer, &expect, &trust).unwrap();
+//! assert_eq!(verified.address, "0x2793975f02ea0402393e0c3ea30c51264276927e");
+//! assert_eq!(verified.fee_bps(), Some(50));
+//! assert!(verified.sealed_to_current());
+//!
+//! // The same answer for a customer the merchant did not ask about is refused.
+//! let other = Expect::new("usr_somebody_else", Family::Evm, false);
+//! assert_eq!(address::verify(&answer, &other, &trust), Err(Refusal::CustomerRef));
+//! ```
 
 use std::collections::BTreeMap;
 

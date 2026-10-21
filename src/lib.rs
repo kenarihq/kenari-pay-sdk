@@ -1,4 +1,4 @@
-//! Merchant SDK for the kenari-pay deposit gateway.
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
