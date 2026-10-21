@@ -294,6 +294,10 @@ impl Api {
     /// `POST /v1/addresses`: the customer's permanent address of `family`, allocated on the first
     /// call and the same one on every later call. Decode with [`Address`](crate::wire::Address)
     /// and run [`crate::address::verify`] before showing or storing it.
+    ///
+    /// The `customer_ref` travels in the JSON body, so this call is not refused for a value that
+    /// would be a bad path segment. The gateway refuses a `customer_ref` of `.` or `..` itself, as
+    /// `400 invalid_request`.
     pub fn create_address(&self, customer_ref: &str, family: Family) -> HttpRequest {
         let body = serde_json::json!({
             "customer_ref": customer_ref,
