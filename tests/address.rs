@@ -33,7 +33,7 @@ fn expect(answer: &Address) -> Expect<'_> {
 
 fn trust() -> Trust {
     Trust::new()
-        .chains(["base-sepolia"])
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, [PAYOUT])
         .unwrap()
@@ -114,7 +114,7 @@ fn a_fee_below_the_maximum_and_an_old_wallet_pass_and_are_told_apart() {
     // The merchant moved on to another wallet and kept the old one in the list.
     let answer = forwarder_answer();
     let moved = Trust::new()
-        .chains(["base-sepolia"])
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, [OLD_PAYOUT, PAYOUT])
         .unwrap();
@@ -139,7 +139,7 @@ fn the_payouts_are_compared_in_canonical_form() {
         "  0xeb1aaeefe4370f06e25bc4bf41e6dc3807fa6dc1\n",
     ] {
         let t = Trust::new()
-            .chains(["base-sepolia"])
+            .chains(Family::Evm, ["base-sepolia"])
             .pin("base-sepolia", pins::BASE_SEPOLIA)
             .payouts(Family::Evm, [spelling])
             .unwrap();
@@ -168,7 +168,7 @@ fn every_chain_of_the_merchant_is_checked_and_the_networks_of_the_answer_decide_
     let answer = forwarder_answer();
     // Two chains, both pinned to the same pair.
     let two = Trust::new()
-        .chains(["base-sepolia", "base-sepolia-b"])
+        .chains(Family::Evm, ["base-sepolia", "base-sepolia-b"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .pin("base-sepolia-b", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, [PAYOUT])
@@ -184,6 +184,92 @@ fn every_chain_of_the_merchant_is_checked_and_the_networks_of_the_answer_decide_
         .unwrap()
         .networks;
     assert!(address::verify(&other, &expect(&other), &trust()).is_ok());
+}
+
+#[test]
+fn a_chain_of_another_family_next_to_the_evm_ones_changes_nothing() {
+    let answer = forwarder_answer();
+    // A merchant on both families lists its Solana chain beside the EVM one. Solana has no
+    // forwarder and so no pin, and the forwarder check must not ask for one.
+    let both = Trust::new()
+        .chains(Family::Evm, ["base-sepolia"])
+        .chains(Family::Solana, ["solana-devnet"])
+        .pin("base-sepolia", pins::BASE_SEPOLIA)
+        .payouts(Family::Evm, [PAYOUT])
+        .unwrap();
+    assert_eq!(
+        both.chains.get(&Family::Solana),
+        Some(&vec!["solana-devnet".to_string()])
+    );
+    let verified = address::verify(&answer, &expect(&answer), &both).unwrap();
+    assert_eq!(verified.chains, vec!["base-sepolia".to_string()]);
+    // The order of the calls does not matter.
+    let reversed = Trust::new()
+        .chains(Family::Solana, ["solana-devnet", "solana-mainnet"])
+        .chains(Family::Evm, ["base-sepolia"])
+        .pin("base-sepolia", pins::BASE_SEPOLIA)
+        .payouts(Family::Evm, [PAYOUT])
+        .unwrap();
+    assert!(address::verify(&answer, &expect(&answer), &reversed).is_ok());
+    // A pin that is wrong for the Solana chain name is never read either.
+    let pinned = both
+        .clone()
+        .pin("solana-devnet", ForwarderPin::new([9; 20], [8; 20]));
+    assert!(address::verify(&answer, &expect(&answer), &pinned).is_ok());
+
+    // Only a Solana chain listed is no EVM chain at all.
+    let solana_only = Trust::new()
+        .chains(Family::Solana, ["solana-devnet"])
+        .pin("base-sepolia", pins::BASE_SEPOLIA)
+        .payouts(Family::Evm, [PAYOUT])
+        .unwrap();
+    assert_eq!(
+        address::verify(&answer, &expect(&answer), &solana_only),
+        Err(Refusal::NoChains)
+    );
+    // A Solana chain listed under the EVM family is an EVM chain to the check, and needs its pin.
+    let misfiled = Trust::new()
+        .chains(Family::Evm, ["base-sepolia", "solana-devnet"])
+        .pin("base-sepolia", pins::BASE_SEPOLIA)
+        .payouts(Family::Evm, [PAYOUT])
+        .unwrap();
+    assert_eq!(
+        address::verify(&answer, &expect(&answer), &misfiled),
+        Err(Refusal::NoPin {
+            chain: "solana-devnet".into()
+        })
+    );
+    // A pool address does not read chains at all.
+    let pool = pool_answer();
+    assert!(address::verify(
+        &pool,
+        &expect(&pool),
+        &pool_trust().chains(Family::Solana, ["x"])
+    )
+    .is_ok());
+}
+
+#[test]
+fn chains_of_a_family_add_up_across_calls() {
+    let t = Trust::new()
+        .chains(Family::Evm, ["base-sepolia"])
+        .chains(Family::Evm, ["base"]);
+    assert_eq!(
+        t.chains.get(&Family::Evm),
+        Some(&vec!["base-sepolia".to_string(), "base".to_string()])
+    );
+    // So the second call cannot loosen the check by dropping the first: `base` has no pin.
+    let t = t
+        .pin("base-sepolia", pins::BASE_SEPOLIA)
+        .payouts(Family::Evm, [PAYOUT])
+        .unwrap();
+    let answer = forwarder_answer();
+    assert_eq!(
+        address::verify(&answer, &expect(&answer), &t),
+        Err(Refusal::NoPin {
+            chain: "base".into()
+        })
+    );
 }
 
 // ---- forwarder: one test per refusal ---------------------------------------------------------
@@ -293,6 +379,7 @@ fn refuses_an_empty_chains_list() {
         .payouts(Family::Evm, [PAYOUT])
         .unwrap();
     assert!(none.chains.is_empty());
+    assert_eq!(none.chains.get(&Family::Evm), None);
     assert_eq!(
         address::verify(&answer, &expect(&answer), &none),
         Err(Refusal::NoChains)
@@ -305,7 +392,7 @@ fn refuses_a_chain_without_a_pin() {
     // The merchant offers `base` too and has no pin for it, as kenari on live before the mainnet
     // factory exists.
     let two = Trust::new()
-        .chains(["base-sepolia", "base"])
+        .chains(Family::Evm, ["base-sepolia", "base"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, [PAYOUT])
         .unwrap();
@@ -317,7 +404,7 @@ fn refuses_a_chain_without_a_pin() {
     );
     // A pin for a chain the merchant does not list is no pin for the one it does.
     let wrong = Trust::new()
-        .chains(["base"])
+        .chains(Family::Evm, ["base"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, [PAYOUT])
         .unwrap();
@@ -342,7 +429,7 @@ fn refuses_a_pin_that_differs() {
     );
     for pin in [other_factory, other_implementation, swapped] {
         let t = Trust::new()
-            .chains(["base-sepolia"])
+            .chains(Family::Evm, ["base-sepolia"])
             .pin("base-sepolia", pin)
             .payouts(Family::Evm, [PAYOUT])
             .unwrap();
@@ -355,7 +442,7 @@ fn refuses_a_pin_that_differs() {
     }
     // One chain right and one wrong is a refusal naming the wrong one.
     let mixed = Trust::new()
-        .chains(["base-sepolia", "other"])
+        .chains(Family::Evm, ["base-sepolia", "other"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .pin("other", other_factory)
         .payouts(Family::Evm, [PAYOUT])
@@ -412,7 +499,7 @@ fn refuses_a_payout_that_is_not_ours() {
     // No wallets at all, wallets of another family only, and an empty list all refuse.
     let real = forwarder_answer();
     let no_payouts = Trust::new()
-        .chains(["base-sepolia"])
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA);
     assert_eq!(
         address::verify(&real, &expect(&real), &no_payouts),
@@ -438,7 +525,7 @@ fn refuses_a_payout_that_is_not_ours() {
     );
     // A wallet the merchant removed from its list (it was lost) is no longer accepted.
     let moved_on = Trust::new()
-        .chains(["base-sepolia"])
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, [OLD_PAYOUT])
         .unwrap();
@@ -502,7 +589,7 @@ fn refuses_a_changed_salt_or_address() {
     );
     // Another wallet of the merchant's own list under the same address.
     let two = Trust::new()
-        .chains(["base-sepolia"])
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, [PAYOUT, OLD_PAYOUT])
         .unwrap();
@@ -553,7 +640,7 @@ fn a_zero_payout_is_never_accepted() {
     let mut answer = forwarder_answer();
     block(&mut answer).payout = "0x0000000000000000000000000000000000000000".into();
     let zero = Trust::new()
-        .chains(["base-sepolia"])
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, ["0x0000000000000000000000000000000000000000"])
         .unwrap();

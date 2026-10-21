@@ -19,6 +19,8 @@ The first version of the merchant SDK for kenari-pay.
 - `address`: `verify` for forwarder addresses (recomputed from the merchant's own pins, payout
   wallets and maximum fee) and pool addresses (ed25519 attestation, `verify_strict`), with
   `forwarder::address`, `forwarder::salt` and `pins::BASE_SEPOLIA`.
+  `Trust::chains(family, [...])` is keyed by family like `payouts`, and the forwarder check reads
+  the EVM list only.
 - `webhook`: `verify` with the `t=<unix>,v1=<hex>` header, HMAC-SHA256, a constant time compare, a
   300 s tolerance and an empty secret that refuses every webhook.
   An event of a type the SDK does not know verifies whatever its `data` holds, with

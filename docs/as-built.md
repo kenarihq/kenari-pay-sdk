@@ -130,6 +130,12 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
   The fields are public and named as in the plan (`chains`, `forwarder_pins`, `payouts`,
   `max_fee_bps`, `attest_pubkeys`), with builder methods: `chains`, `pin`, `payouts`, `max_fee_bps`,
   `attest_key`. The ones that parse text return `Result<_, TrustError>`.
+- `Trust::chains` is keyed by family, as `payouts` is: `Trust::chains(Family::Evm, [...])`, and the
+  field is a `BTreeMap<Family, Vec<String>>`. The forwarder check reads the EVM list only, so a
+  Solana chain listed next to the EVM one changes nothing (Solana has no forwarder and so no pin
+  to ask for). A call adds to the family's list and does not replace it, which differs from
+  `payouts` on purpose: a later call can then only make the check stricter (one more chain needing
+  its pin) and never drop a chain. `Verified::chains` is the EVM list.
 - `Wallet` is a canonical wallet address that can only be made by `Wallet::parse(family, text)`.
   EVM text is parsed strictly (a mixed case spelling must carry its EIP-55 checksum, as the gateway
   does for payout wallets) and kept lower case. Wallets compare in canonical form.
@@ -145,8 +151,8 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
   `payout()` and `fee_bps()`. For a pool address `chains` is empty (the pool check has nothing to do
   with a chain) and `sealed_to_current()` is `false`. The canonical `address` is an addition, so a
   merchant stores the spelling that was checked.
-- `Trust::chains` being empty is refused for a forwarder only. The plan says "at least one" and the
-  pool check does not use chains.
+- A `Trust` with no EVM chain is refused for a forwarder only (`Refusal::NoChains`). The plan says
+  "at least one" and the pool check does not use chains.
 - The order of the checks, which decides the `Refusal` named when several fail: `livemode`,
   `customer_ref`, `family`, then the kind. Forwarder: family is EVM, block present, chains not
   empty, block factory and implementation parse, per chain a pin that equals them, payout parses and

@@ -7,8 +7,9 @@
 //! A **forwarder** address passes only when
 //!
 //! 1. its `forwarder` block is present,
-//! 2. every chain in [`Trust::chains`] has a pin equal to the block's factory and implementation
-//!    (the gateway's own `networks` list is its claim and decides nothing),
+//! 2. every EVM chain in [`Trust::chains`] has a pin equal to the block's factory and
+//!    implementation (the gateway's own `networks` list is its claim and decides nothing, and the
+//!    chains of another family are not looked at),
 //! 3. the payout is one of the merchant's own wallets, compared in canonical form,
 //! 4. `fee_bps` is at most [`Trust::max_fee_bps`], and
 //! 5. the CREATE2 address recomputed from the factory, the salt, the implementation, the payout
@@ -29,7 +30,7 @@
 //! let answer: Address = serde_json::from_str(text).unwrap();
 //!
 //! let trust = Trust::new()
-//!     .chains(["base-sepolia"])
+//!     .chains(Family::Evm, ["base-sepolia"])
 //!     .pin("base-sepolia", pins::BASE_SEPOLIA)
 //!     .payouts(Family::Evm, ["0xeb1aaeefe4370f06e25bc4bf41e6dc3807fa6dc1"])
 //!     .unwrap();
@@ -186,17 +187,18 @@ pub fn canonical_address(family: Family, raw: &str) -> Option<String> {
 
 /// What a merchant trusts. Every field is the merchant's own, never anything the gateway sent.
 ///
-/// A new [`Trust`] trusts nothing, so [`verify`] refuses every forwarder address until the chains,
-/// their pins and the payout wallets are set, and every pool address until the attestation keys
-/// are. Build it once at start up, and treat an `Err` from a builder method as a reason not to
-/// start.
+/// A new [`Trust`] trusts nothing, so [`verify`] refuses every forwarder address until the EVM
+/// chains, their pins and the EVM payout wallets are set, and every pool address until the
+/// attestation keys are. Build it once at start up, and treat an `Err` from a builder method as a
+/// reason not to start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trust {
-    /// The chain ids of the family the merchant accepts deposits on. At least one is needed to
-    /// accept a forwarder address.
-    pub chains: Vec<String>,
-    /// Per chain id, the factory and the implementation the merchant trusts. Every chain in
-    /// `chains` needs one.
+    /// The chain ids the merchant accepts deposits on, per family, as `payouts` is keyed. Only the
+    /// [`Family::Evm`] list is read, by the forwarder check, which needs at least one chain in it.
+    /// A chain of another family listed here changes nothing.
+    pub chains: BTreeMap<Family, Vec<String>>,
+    /// Per chain id, the factory and the implementation the merchant trusts. Every chain in the
+    /// EVM list of `chains` needs one.
     pub forwarder_pins: BTreeMap<String, ForwarderPin>,
     /// The merchant's own payout wallets per family, the wallets it still controls. The first of a
     /// family is the one new addresses must be sealed to. Removing a lost wallet from this list is
@@ -218,7 +220,7 @@ impl Trust {
     /// A trust with nothing in it and `max_fee_bps` at [`forwarder::DEFAULT_FEE_BPS`].
     pub fn new() -> Trust {
         Trust {
-            chains: Vec::new(),
+            chains: BTreeMap::new(),
             forwarder_pins: BTreeMap::new(),
             payouts: BTreeMap::new(),
             max_fee_bps: forwarder::DEFAULT_FEE_BPS,
@@ -226,13 +228,18 @@ impl Trust {
         }
     }
 
-    /// Add the chain ids the merchant accepts deposits on.
-    pub fn chains<I, S>(mut self, chains: I) -> Trust
+    /// Add the chain ids of `family` the merchant accepts deposits on. A second call for the same
+    /// family adds to its list, so a chain is never dropped by a later call. A forwarder address
+    /// is checked against the [`Family::Evm`] list only.
+    pub fn chains<I, S>(mut self, family: Family, chains: I) -> Trust
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.chains.extend(chains.into_iter().map(Into::into));
+        self.chains
+            .entry(family)
+            .or_default()
+            .extend(chains.into_iter().map(Into::into));
         self
     }
 
@@ -319,8 +326,8 @@ pub struct Verified {
     pub address: String,
     /// The model and what the check found.
     pub model: Model,
-    /// The chains a forwarder was checked against, which are [`Trust::chains`]. Empty for a pool
-    /// address, whose check has nothing to do with a chain.
+    /// The chains a forwarder was checked against, which are the EVM list of [`Trust::chains`].
+    /// Empty for a pool address, whose check has nothing to do with a chain.
     pub chains: Vec<String>,
     sealed_to_current: bool,
 }
@@ -374,9 +381,9 @@ pub enum Refusal {
     Malformed,
     /// A forwarder address with no forwarder block.
     NoForwarderBlock,
-    /// [`Trust::chains`] is empty, so there is nothing to check the forwarder against.
+    /// [`Trust::chains`] has no EVM chain, so there is nothing to check the forwarder against.
     NoChains,
-    /// A chain of [`Trust::chains`] has no pin.
+    /// A chain of the EVM list of [`Trust::chains`] has no pin.
     NoPin {
         /// The chain id, from the merchant's own list.
         chain: String,
@@ -489,14 +496,21 @@ fn verify_forwarder(address: &Address, trust: &Trust) -> Result<Verified, Refusa
         .forwarder
         .as_ref()
         .ok_or(Refusal::NoForwarderBlock)?;
-    if trust.chains.is_empty() {
+    // Only the EVM chains count. A forwarder is an EVM address, and a chain of another family
+    // that the merchant lists for its own reasons has no factory to pin.
+    let chains = trust
+        .chains
+        .get(&Family::Evm)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if chains.is_empty() {
         return Err(Refusal::NoChains);
     }
     let factory = forwarder::parse_address(&block.factory).map_err(|_| Refusal::Malformed)?;
     let implementation =
         forwarder::parse_address(&block.implementation).map_err(|_| Refusal::Malformed)?;
     // The merchant's chains and pins decide, never the networks the gateway listed.
-    for chain in &trust.chains {
+    for chain in chains {
         let pin = trust
             .forwarder_pins
             .get(chain)
@@ -541,7 +555,7 @@ fn verify_forwarder(address: &Address, trust: &Trust) -> Result<Verified, Refusa
             payout: payout_text,
             fee_bps: block.fee_bps,
         },
-        chains: trust.chains.clone(),
+        chains: chains.to_vec(),
         sealed_to_current,
     })
 }

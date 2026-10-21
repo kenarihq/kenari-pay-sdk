@@ -50,8 +50,8 @@ use kenari_pay_sdk::wire::Family;
 
 fn trust() -> Result<Trust, kenari_pay_sdk::address::TrustError> {
     Ok(Trust::new()
-        // The chains you accept deposits on, and the factory you trust on each.
-        .chains(["base-sepolia"])
+        // The EVM chains you accept deposits on, and the factory you trust on each.
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         // Your own payout wallets. The first is the one new addresses must be sealed to.
         .payouts(Family::Evm, ["0xeb1aaeefe4370f06e25bc4bf41e6dc3807fa6dc1"])?
@@ -96,7 +96,7 @@ fn check(
 ```
 
 `verify` passes a forwarder address only when its block is present, the factory and the
-implementation equal your pin for every chain you listed, the payout is one of your wallets, the
+implementation equal your pin for every EVM chain you listed, the payout is one of your wallets, the
 fee is at most your maximum, and the address recomputes from all of it. A pool address passes only
 when its attestation verifies under the key you hold for its epoch. Anything else is a `Refusal`
 with a fixed text: never show that address, alert a person.

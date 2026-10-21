@@ -379,7 +379,7 @@ fn a_tampered_copy_of_each_vector_is_refused() {
 
     // The forwarder example file: a changed salt and a changed address are refused by the check.
     let trust = Trust::new()
-        .chains(["base-sepolia"])
+        .chains(Family::Evm, ["base-sepolia"])
         .pin("base-sepolia", pins::BASE_SEPOLIA)
         .payouts(Family::Evm, ["0xeb1aaeefe4370f06e25bc4bf41e6dc3807fa6dc1"])
         .unwrap();
