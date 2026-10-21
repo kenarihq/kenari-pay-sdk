@@ -4,5 +4,6 @@
 
 pub mod address;
 pub mod api;
+pub mod feed;
 pub mod webhook;
 pub mod wire;
