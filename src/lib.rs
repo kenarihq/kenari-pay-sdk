@@ -3,4 +3,5 @@
 #![deny(missing_docs)]
 
 pub mod address;
+pub mod webhook;
 pub mod wire;
