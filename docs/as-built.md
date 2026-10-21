@@ -67,6 +67,28 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
 
 - `Api::new` trims white space around the URL and the key and the trailing slashes of the URL, as
   kenari's `from_config` does.
+- `Api::new` returns a `Result` and refuses a base URL that is not `https://`, so the bearer key
+  never crosses the network in clear text. The one exception is `http://` to a loopback host:
+  `localhost`, `127.0.0.1` or `[::1]`, with or without a port, for tests and local fakes. The
+  refusal is `ApiError::BaseUrl`, with a fixed text that holds no part of the URL. Choices where
+  the brief left room:
+  - The host must be exactly one of the three (a host that only starts like one, such as
+    `127.0.0.1.evil.test`, is not a loopback host), `localhost` in any case, the port decimal and
+    at most 65535. `127.0.0.2`, `0.0.0.0` and the other spellings of loopback are refused.
+  - An authority with user info (`@`), a backslash, white space or a control character is refused
+    for `https://` too, because a URL parser reads those differently from a plain split and the
+    check must name the host the key goes to. The scheme may be upper case.
+  - Nothing else about an `https://` URL is checked, its host and path are the merchant's own.
+- A value that becomes a path segment (the `id_or_key` of `deposit`, the `customer_ref` of
+  `customer_deposits`, the `address_id` of `reissue`) is refused when it is empty, `.` or `..`, as
+  `ApiError::Argument` with a fixed text that holds no value. Those three calls return
+  `Result<HttpRequest, ApiError>`. Every URL parser collapses a dot segment, so `..` would render
+  `/v1/customers/../deposits`, which the gateway reads as `/v1/deposits`, the feed of every
+  customer, and its page decodes as `CustomerDeposits`. Percent encoding the dots does not help
+  (the WHATWG parser reads `%2e%2e` as `..`), so a `%` in a value is itself encoded: `%2e%2e`
+  stays one segment, `%252e%252e`, and is not a dot segment. Those three values are the only ones
+  that are a dot segment after encoding. `create_address` stays infallible: its `customer_ref`
+  goes in the JSON body and not in a path (the gateway refuses `.` and `..` there as well).
 - The `Authorization: Bearer` header is sent on every call, `networks` included, as kenari does.
   The gateway ignores it there. `Content-Type: application/json` is added only for a request with a
   body, so a reissue (a `POST` with no body) has none. No `Accept` header, the plan lists none.
@@ -87,8 +109,9 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
 
 ## client
 
-- `Client::new` returns a `Result` because building a `reqwest::Client` can fail. `Client::with_http`
-  cannot fail.
+- `Client::new` returns a `Result` because building a `reqwest::Client` can fail, and because the
+  base URL can be refused (see `Api::new`). `Client::with_http` returns a `Result` for the second
+  reason.
 - The default client has the 5 s connect and 20 s total timeouts, and follows no redirect. A
   redirect would carry the bearer key to wherever it points, and the gateway never redirects `/v1`.
   A 3xx therefore comes back as `ApiError::Status`. It also sets a user agent, `kenari-pay-sdk/<version>`.

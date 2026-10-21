@@ -101,18 +101,32 @@ pub struct Client {
 
 impl Client {
     /// A client for `base_url` and the merchant's API key over [`default_http`].
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::BaseUrl`] in [`ClientError::Api`] when `base_url` is not `https://` and not a
+    /// loopback host (see [`Api::new`]), so the key never goes over plain http. Or a transport
+    /// error when the HTTP client cannot be built.
     pub fn new(base_url: &str, api_key: &str) -> Result<Client, ClientError> {
-        Ok(Client::with_http(base_url, api_key, default_http()?))
+        Client::with_http(base_url, api_key, default_http()?)
     }
 
     /// A client over an HTTP client the merchant built, with its own timeouts, proxy and TLS
     /// settings. Set a timeout on it, because without one a call can wait forever. Turn redirects
     /// off too, so the bearer key is only ever sent to the base URL.
-    pub fn with_http(base_url: &str, api_key: &str, http: reqwest::Client) -> Client {
-        Client {
-            api: Api::new(base_url, api_key),
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::BaseUrl`] in [`ClientError::Api`], as for [`Client::new`].
+    pub fn with_http(
+        base_url: &str,
+        api_key: &str,
+        http: reqwest::Client,
+    ) -> Result<Client, ClientError> {
+        Ok(Client {
+            api: Api::new(base_url, api_key)?,
             http,
-        }
+        })
     }
 
     /// The request builder underneath, for the calls this client has no method for.

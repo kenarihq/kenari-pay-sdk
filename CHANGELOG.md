@@ -11,6 +11,9 @@ The first version of the merchant SDK for kenari-pay.
   for the answers, and `ApiError` with a fixed `Display`. It has `networks`, `create_address`,
   `reissue`, `deposit`, `deposits`, `customer_deposits` and `sweeps`, and for pool merchants
   `keys`, `register_key` and `import_pool`.
+  `Api::new` refuses a base URL that is not `https://`, except a loopback host, so the key never
+  goes over plain http. A value that would be an empty, `.` or `..` path segment is refused as
+  `ApiError::Argument`, because a URL parser would collapse it into another route.
 - `client` (feature `reqwest`, off by default): the same calls over `reqwest` with a 5 s connect
   timeout, a 20 s total timeout and no redirects.
 - `address`: `verify` for forwarder addresses (recomputed from the merchant's own pins, payout

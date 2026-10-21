@@ -27,7 +27,7 @@
 //! use kenari_pay_sdk::feed::Cursor;
 //! use kenari_pay_sdk::wire::DepositsPage;
 //!
-//! let api = Api::new("https://pay-sandbox.kenari.id", "kp_test_example");
+//! let api = Api::new("https://pay-sandbox.kenari.id", "kp_test_example").unwrap();
 //! let mut cursor = Cursor::deposits(0);
 //!
 //! // Render the request, send it with your own client, decode the answer.

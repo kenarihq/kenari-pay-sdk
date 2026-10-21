@@ -8,7 +8,7 @@ const DEPOSITS_PAGE: &[u8] = include_bytes!("../vectors/deposits_page.json");
 const SWEEPS_PAGE: &[u8] = include_bytes!("../vectors/sweeps_page.json");
 
 fn api() -> Api {
-    Api::new("https://pay-sandbox.kenari.id", "kp_test_example")
+    Api::new("https://pay-sandbox.kenari.id", "kp_test_example").unwrap()
 }
 
 #[test]

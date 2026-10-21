@@ -260,6 +260,34 @@ async fn a_redirect_is_not_followed_and_the_key_goes_nowhere_else() {
     );
 }
 
+#[test]
+fn the_key_never_goes_over_plain_http_to_another_host() {
+    // Both constructors refuse it, as the same fixed error, before any client is used.
+    let want = ClientError::Api(ApiError::BaseUrl);
+    for base in [
+        "http://pay.kenari.id",
+        "http://127.0.0.1@evil.test",
+        "ftp://x",
+    ] {
+        assert_eq!(Client::new(base, KEY).unwrap_err(), want, "{base}");
+        let http = reqwest::Client::new();
+        assert_eq!(
+            Client::with_http(base, KEY, http).unwrap_err(),
+            want,
+            "{base}"
+        );
+    }
+    assert_eq!(
+        want.to_string(),
+        "base URL must be https or a loopback address"
+    );
+    // https is accepted, and so is a loopback host over plain http, which the other tests use.
+    assert!(Client::new("https://pay-sandbox.kenari.id", KEY).is_ok());
+    assert!(Client::new("http://127.0.0.1:1", KEY).is_ok());
+    assert!(Client::new("http://localhost:1", KEY).is_ok());
+    assert!(Client::new("http://[::1]:1", KEY).is_ok());
+}
+
 #[tokio::test]
 async fn a_dot_segment_is_refused_before_anything_is_sent() {
     // The server must never be asked: `/v1/customers/../deposits` would reach the feed of every
@@ -316,7 +344,7 @@ async fn a_client_the_merchant_built_is_used_as_it_is() {
         .timeout(Duration::from_millis(200))
         .build()
         .unwrap();
-    let client = Client::with_http(&base, KEY, http);
+    let client = Client::with_http(&base, KEY, http).unwrap();
     let started = std::time::Instant::now();
     let error = client.networks().await.unwrap_err();
     assert!(matches!(error, ClientError::Transport(_)), "{error:?}");

@@ -10,7 +10,7 @@ const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
 const BASE: &str = "https://pay-sandbox.kenari.id";
 
 fn api() -> Api {
-    Api::new(BASE, KEY)
+    Api::new(BASE, KEY).unwrap()
 }
 
 fn bearer() -> (String, String) {
@@ -179,13 +179,114 @@ fn a_value_that_looks_encoded_stays_one_encoded_segment() {
 
 #[test]
 fn the_base_url_and_key_are_trimmed() {
-    let api = Api::new("  https://pay.kenari.id///\n", "  kp_live_x \n");
+    let api = Api::new("  https://pay.kenari.id///\n", "  kp_live_x \n").unwrap();
     let request = api.networks();
     assert_eq!(request.url, "https://pay.kenari.id/v1/networks");
     assert_eq!(
         request.headers,
         vec![("Authorization".to_string(), "Bearer kp_live_x".to_string())]
     );
+}
+
+#[test]
+fn the_key_only_goes_to_https_or_to_a_loopback_host() {
+    // The two gateways, and what a merchant may reasonably write around them.
+    for base in [
+        "https://pay.kenari.id",
+        "https://pay-sandbox.kenari.id/",
+        "HTTPS://pay.kenari.id",
+        "https://pay.kenari.id:8443",
+        "https://127.0.0.1",
+        "https://proxy.example/pay",
+    ] {
+        assert!(Api::new(base, KEY).is_ok(), "{base} should be accepted");
+    }
+    // Plain http to the loopback interface, for a test or a local fake.
+    for base in [
+        "http://localhost",
+        "http://LocalHost:8080",
+        "http://localhost:8080/",
+        "http://127.0.0.1",
+        "http://127.0.0.1:34567",
+        "http://[::1]",
+        "http://[::1]:8080/",
+        "HTTP://127.0.0.1:1",
+    ] {
+        assert!(Api::new(base, KEY).is_ok(), "{base} should be accepted");
+    }
+    // Plain http anywhere else would send the key in clear text.
+    for base in [
+        "http://pay.kenari.id",
+        "http://pay-sandbox.kenari.id/",
+        "http://127.0.0.2",
+        "http://0.0.0.0",
+        "http://127.1",
+        "http://[::2]",
+        "http://[::ffff:127.0.0.1]",
+        "http://192.168.1.10:8080",
+        // A host that only starts like a loopback one.
+        "http://127.0.0.1.evil.test",
+        "http://localhost.evil.test",
+        "http://evil.test/localhost",
+        "http://evil.test?127.0.0.1",
+        "http://evil.test#localhost",
+        // User info, which makes the real host the part after the `@`.
+        "http://127.0.0.1@evil.test",
+        "http://localhost:80@evil.test",
+        "http://user:pw@localhost",
+        "http://127.0.0.1\\@evil.test",
+        // A port that is not a port.
+        "http://localhost:",
+        "http://localhost:80x",
+        "http://localhost:99999",
+        "http://localhost:-1",
+        "http://[::1",
+        "http://[::1]x",
+        "http://[::1]:",
+        // Characters a URL parser strips or reads differently.
+        "http://local\thost",
+        "http://127.0.0.1\n.evil.test",
+        "http://127.0.0.1 .evil.test",
+    ] {
+        assert_eq!(
+            Api::new(base, KEY).unwrap_err(),
+            ApiError::BaseUrl,
+            "{base:?} should be refused"
+        );
+    }
+    // Not an http or https URL at all.
+    for base in [
+        "",
+        "   ",
+        "pay.kenari.id",
+        "//pay.kenari.id",
+        "https://",
+        "https:///v1",
+        "https://@",
+        "https://pay.kenari.id@evil.test",
+        "ftp://pay.kenari.id",
+        "ws://localhost",
+        "file:///etc/passwd",
+        "https:pay.kenari.id",
+        "localhost:8080",
+    ] {
+        assert_eq!(
+            Api::new(base, KEY).unwrap_err(),
+            ApiError::BaseUrl,
+            "{base:?} should be refused"
+        );
+    }
+}
+
+#[test]
+fn the_base_url_refusal_is_fixed_text_and_holds_nothing() {
+    let error = Api::new("http://user:SECRETPASS@pay.kenari.id/SECRETPATH", KEY).unwrap_err();
+    let shown = error.to_string();
+    assert_eq!(shown, "base URL must be https or a loopback address");
+    assert!(!shown.contains(';'));
+    let debug = format!("{error:?}");
+    assert_eq!(debug, "BaseUrl");
+    assert!(!debug.contains("SECRET"));
 }
 
 #[test]

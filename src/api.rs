@@ -10,7 +10,7 @@
 //! use kenari_pay_sdk::api::{Api, ApiError, Method};
 //! use kenari_pay_sdk::wire::{DepositsPage, Family};
 //!
-//! let api = Api::new("https://pay-sandbox.kenari.id/", "kp_test_example");
+//! let api = Api::new("https://pay-sandbox.kenari.id/", "kp_test_example").unwrap();
 //!
 //! // Render a call and send it with your own client.
 //! let request = api.create_address("usr_1", Family::Evm);
@@ -24,6 +24,10 @@
 //!     error,
 //!     ApiError::Status { code: 401, error_code: Some("unauthorized".into()) }
 //! );
+//!
+//! // The key never goes over plain http, except to a loopback address for a local fake.
+//! assert_eq!(Api::new("http://pay.kenari.id", "kp_test_example").unwrap_err(), ApiError::BaseUrl);
+//! assert!(Api::new("http://127.0.0.1:8080", "kp_test_example").is_ok());
 //! ```
 
 use serde::de::DeserializeOwned;
@@ -109,6 +113,9 @@ pub enum ApiError {
     /// `/v1/deposits`, the merchant wide feed. No request is built, and the value is not kept
     /// here.
     Argument,
+    /// The base URL given to [`Api::new`] is not `https://`, and not `http://` to a loopback host
+    /// either, so the bearer key would cross the network in clear text. The URL is not kept here.
+    BaseUrl,
 }
 
 impl std::fmt::Display for ApiError {
@@ -117,6 +124,7 @@ impl std::fmt::Display for ApiError {
             ApiError::Status { code, .. } => write!(f, "gateway answered {code}"),
             ApiError::Decode(_) => f.write_str("gateway answer unreadable"),
             ApiError::Argument => f.write_str("request argument cannot be a path segment"),
+            ApiError::BaseUrl => f.write_str("base URL must be https or a loopback address"),
         }
     }
 }
@@ -180,15 +188,73 @@ fn plain_code(code: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
+/// Whether `authority` (the part of a URL between `://` and the first `/`, `?` or `#`) is exactly
+/// a loopback host with an optional port: `localhost`, `127.0.0.1` or `[::1]`.
+///
+/// Nothing else counts, so a host that merely starts like a loopback one (`127.0.0.1.evil.test`,
+/// `localhost.evil.test`) is not one.
+fn is_loopback_authority(authority: &str) -> bool {
+    let host_end = if authority.starts_with('[') {
+        authority.find(']').map(|i| i + 1)
+    } else {
+        Some(authority.find(':').unwrap_or(authority.len()))
+    };
+    let Some(host_end) = host_end else {
+        return false;
+    };
+    let (host, after) = authority.split_at(host_end);
+    let port_ok = after.is_empty()
+        || after.strip_prefix(':').is_some_and(|port| {
+            !port.is_empty()
+                && port.bytes().all(|b| b.is_ascii_digit())
+                && port.parse::<u16>().is_ok()
+        });
+    port_ok && (host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "[::1]")
+}
+
+/// The base URL as `Api` keeps it: trimmed, no trailing slash, and `https://`, or `http://` to a
+/// loopback host. The bearer key goes to this host on every call.
+fn checked_base(base_url: &str) -> Result<String, ApiError> {
+    let base = base_url.trim().trim_end_matches('/');
+    let (scheme, rest) = base.split_once("://").ok_or(ApiError::BaseUrl)?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    // Refuse what could make a URL parser read another host than the one that was checked here:
+    // user info (`127.0.0.1@evil.test`), a backslash (a slash to the WHATWG parser), and white
+    // space or control characters (which it strips).
+    if authority.is_empty()
+        || authority
+            .chars()
+            .any(|c| matches!(c, '@' | '\\') || c.is_whitespace() || c.is_control())
+    {
+        return Err(ApiError::BaseUrl);
+    }
+    let allowed = scheme.eq_ignore_ascii_case("https")
+        || (scheme.eq_ignore_ascii_case("http") && is_loopback_authority(authority));
+    if allowed {
+        Ok(base.to_string())
+    } else {
+        Err(ApiError::BaseUrl)
+    }
+}
+
 impl Api {
     /// An API for `base_url` (`https://pay.kenari.id` live or `https://pay-sandbox.kenari.id`
     /// sandbox) and the merchant's key (`kp_live_...` or `kp_test_...`). White space around both
     /// and a trailing slash on the URL are dropped.
-    pub fn new(base_url: &str, api_key: &str) -> Api {
-        Api {
-            base: base_url.trim().trim_end_matches('/').to_string(),
+    ///
+    /// The key is sent on every call, so the URL must be `https://`. The one exception is
+    /// `http://` to a loopback host (`localhost`, `127.0.0.1` or `[::1]`, with or without a
+    /// port), for a test or a local fake gateway.
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::BaseUrl`] for any other URL. Treat it as a reason not to start.
+    pub fn new(base_url: &str, api_key: &str) -> Result<Api, ApiError> {
+        Ok(Api {
+            base: checked_base(base_url)?,
             api_key: api_key.trim().to_string(),
-        }
+        })
     }
 
     fn headers(&self, with_body: bool) -> Vec<(String, String)> {
@@ -417,7 +483,7 @@ mod tests {
 
     #[test]
     fn no_value_makes_a_rendered_path_collapse() {
-        let api = Api::new("https://pay.kenari.id", "kp_test_x");
+        let api = Api::new("https://pay.kenari.id", "kp_test_x").unwrap();
         let values = [
             "", ".", "..", "...", "%2e", "%2e%2e", ".%2e", "%2e.", "%2E%2E", "a/..", "../..", "/",
             "a/b", "..\\", "./", "\t.", ".\n.",
