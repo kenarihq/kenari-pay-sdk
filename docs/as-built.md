@@ -23,7 +23,7 @@ examples/poll.rs      a complete poll loop (feature `reqwest`)
 ```
 
 Gates: `cargo build --locked`, `cargo clippy --all-targets --all-features -- -D warnings`,
-`cargo test --all-features` (125 tests, 9 of them doc tests), `cargo test` with no features (112),
+`cargo test --all-features` (135 tests, 10 of them doc tests), `cargo test` with no features (121),
 and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. Build with
 `CARGO_PROFILE_DEV_DEBUG=0` and a target directory of your choice, the full debug build is large.
 
@@ -212,6 +212,29 @@ and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, all green. 
   both feeds, and `next(&Api, limit)` renders the request of the one it belongs to.
 - A negative stored value counts as 0, as kenari reads its cursor. `advance_to` only moves forward.
 - The module doc is the rule: advance after an item is processed, stop at the first failure.
+
+## qris (0.2.0)
+
+Built from the gateway's `docs/qris-design.md` section "SDK" and its four QRIS contract files.
+Where the two differ the contract files win:
+
+- The feed page is `QrisInvoicesPage { invoices, next_seq, has_more }`, the shape of
+  `contract/qris_invoices_page.json`, where the design names it `{items, next_seq}`.
+- `QrisInvoice::provider` is required, like `status`. No gateway ever sent an invoice without it.
+  An unknown provider decodes to `QrisProvider::Unknown` and changes nothing about crediting.
+- Amounts are `i64` whole rupiah and `unique_code` is `u16` (0 to 999 today), so a negative code
+  fails to decode.
+- `CreateQrisInvoice::new(reference, customer_ref, amount_idr)` leaves `max_unique_code` and
+  `provider` as `None`, which are then left out of the body so the gateway's defaults apply.
+- `WebhookEvent` gained `qris_invoice: Option<QrisInvoiceRef>` beside `deposit`, rather than one
+  enum for `data`, so code that reads `event.deposit` keeps working. It now has a hand written
+  `Serialize` (one `data` from whichever is set) instead of the derive.
+- Beyond the design: `QrisInvoice::paid_exactly`, `EventType::is_deposit` and `is_qris_invoice`, and
+  `Cursor::qris_invoices` for the backstop feed. There is no call for
+  `POST /v1/sandbox/qris/invoices/{id}/pay`, as there is none for the sandbox deposit either.
+- `tests/vectors.rs` checks each invoice example's QRIS payload with its own TLV reader and
+  CRC-16/CCITT-FALSE: the CRC, tag 01 `12`, tag 54 equal to `amount_due`, ascending tags, and that
+  removing tag 54 gives the brief's static test QRIS back.
 
 ## vectors and the gateway
 

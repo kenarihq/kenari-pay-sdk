@@ -1,0 +1,20 @@
+{
+  "id": "qri_01JAXF3K9V0QH2M7Z5R8T4W6YC",
+  "reference": "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+  "customer_ref": "usr_acc_7f3a",
+  "provider": "gopay",
+  "status": "paid",
+  "base_amount": 50000,
+  "unique_code": 123,
+  "amount_due": 50123,
+  "qris": "00020101021226660014ID.CO.QRIS.WWW01189360091400000000010215ID10290000000010303UMI5204573453033605405501235802ID5914KENARI SANDBOX6007JAKARTA6105101106304D142",
+  "created_at": 1760700000,
+  "expires_at": 1760700900,
+  "match_until": 1760704500,
+  "paid_at": 1760700400,
+  "paid_amount": 50123,
+  "payer_issuer": "DANA",
+  "matched_by": "feed",
+  "seq": 42,
+  "livemode": true
+}

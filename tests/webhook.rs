@@ -6,6 +6,7 @@ use kenari_pay_sdk::wire::{EventType, WebhookEvent};
 
 const VECTOR: &str = include_str!("../vectors/webhook_signature_vector.json");
 const BODY_EXAMPLE: &str = include_str!("../vectors/webhook_deposit_confirmed.json");
+const QRIS_EXAMPLE: &str = include_str!("../vectors/webhook_qris_invoice_paid.json");
 
 struct Vector {
     secret: String,
@@ -317,6 +318,7 @@ fn an_event_type_from_a_newer_gateway_still_verifies_and_reads_as_unknown() {
     assert_eq!(event.id, "evt_9");
     assert_eq!(event.created_at, 5);
     assert_eq!(event.deposit, None);
+    assert_eq!(event.qris_invoice, None);
 
     // Whatever else the data of an unknown type is, or whether it is there at all.
     for data in [
@@ -334,6 +336,7 @@ fn an_event_type_from_a_newer_gateway_still_verifies_and_reads_as_unknown() {
         let event = verified(&body).unwrap_or_else(|e| panic!("{body}: {e:?}"));
         assert_eq!(event.event_type, EventType::Unknown, "{body}");
         assert_eq!(event.deposit, None, "{body}");
+        assert_eq!(event.qris_invoice, None, "{body}");
     }
 
     // Data that looks like a deposit's, under a type this SDK does not know, is still not read as
@@ -342,6 +345,12 @@ fn an_event_type_from_a_newer_gateway_still_verifies_and_reads_as_unknown() {
     let event = verified(body).unwrap();
     assert_eq!(event.event_type, EventType::Unknown);
     assert_eq!(event.deposit, None);
+    // The same for data that looks like a QRIS invoice's under a `qris_invoice.*` type this SDK
+    // does not know.
+    let body = r#"{"id":"evt_9","type":"qris_invoice.refunded","created_at":5,"data":{"invoice_id":"qri_9","reference":"pay_9","seq":9}}"#;
+    let event = verified(body).unwrap();
+    assert_eq!(event.event_type, EventType::Unknown);
+    assert_eq!((event.deposit, event.qris_invoice), (None, None));
 
     // The envelope is still needed for an event of any type.
     for body in [
@@ -370,6 +379,7 @@ fn a_deposit_type_whose_data_is_not_deposit_shaped_is_still_a_body_error() {
             r#","data":{"deposit_id":"dep_1","key":"k"}"#,
             r#","data":{"deposit_id":1,"key":"k","seq":1}"#,
             r#","data":{"deposit_id":"dep_1","key":"k","seq":"1"}"#,
+            r#","data":{"invoice_id":"qri_1","reference":"pay_1","seq":1}"#,
             r#","data":{}"#,
             r#","data":null"#,
             r#","data":[]"#,
@@ -380,6 +390,81 @@ fn a_deposit_type_whose_data_is_not_deposit_shaped_is_still_a_body_error() {
             assert_eq!(verified(&body), Err(WebhookError::Body), "{body}");
         }
     }
+}
+
+#[test]
+fn a_qris_invoice_type_whose_data_is_not_invoice_shaped_is_a_body_error() {
+    for word in ["qris_invoice.paid", "qris_invoice.expired"] {
+        for data in [
+            r#","data":{"deposit_id":"dep_1","key":"k","seq":1}"#,
+            r#","data":{"invoice_id":"qri_1","seq":1}"#,
+            r#","data":{"invoice_id":"qri_1","reference":"pay_1"}"#,
+            r#","data":{"reference":"pay_1","seq":1}"#,
+            r#","data":{"invoice_id":1,"reference":"pay_1","seq":1}"#,
+            r#","data":{"invoice_id":"qri_1","reference":null,"seq":1}"#,
+            r#","data":{"invoice_id":"qri_1","reference":"pay_1","seq":"1"}"#,
+            r#","data":{}"#,
+            r#","data":null"#,
+            r#","data":[]"#,
+            r#","data":"qri_1""#,
+            "",
+        ] {
+            let body = format!(r#"{{"id":"evt_1","type":"{word}","created_at":1{data}}}"#);
+            assert_eq!(verified(&body), Err(WebhookError::Body), "{body}");
+        }
+    }
+}
+
+#[test]
+fn the_qris_example_verifies_when_signed_and_reads_its_invoice_ids() {
+    let event = verified(QRIS_EXAMPLE.trim_end()).unwrap();
+    assert_eq!(event.id, "evt_01JAXF3K9V0QH2M7Z5R8T4W6YD");
+    assert_eq!(event.event_type, EventType::QrisInvoicePaid);
+    assert_eq!(event.created_at, 1_760_700_400);
+    assert_eq!(event.deposit, None);
+    let invoice = event.qris_invoice.as_ref().unwrap();
+    assert_eq!(invoice.invoice_id, "qri_01JAXF3K9V0QH2M7Z5R8T4W6YC");
+    assert_eq!(invoice.reference, "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C");
+    assert_eq!(invoice.seq, 42);
+    // A field a newer gateway adds to the data is ignored.
+    let body = QRIS_EXAMPLE
+        .trim_end()
+        .replace(r#""seq":42}"#, r#""seq":42,"added":true}"#);
+    assert_ne!(body, QRIS_EXAMPLE.trim_end());
+    assert_eq!(verified(&body).unwrap().qris_invoice, event.qris_invoice);
+    // And the body is signed like any other: one changed byte is refused.
+    let v = vector();
+    let header = webhook::sign(&v.secret, v.ts, QRIS_EXAMPLE.as_bytes());
+    let tampered = QRIS_EXAMPLE.replace(r#""seq":42"#, r#""seq":43"#);
+    assert_eq!(
+        webhook::verify(&header, tampered.as_bytes(), &v.secret, v.ts),
+        Err(WebhookError::Mismatch)
+    );
+}
+
+#[test]
+fn a_qris_event_serializes_back_to_its_body() {
+    let example: WebhookEvent = serde_json::from_str(QRIS_EXAMPLE).unwrap();
+    let value = serde_json::to_value(&example).unwrap();
+    assert_eq!(
+        value,
+        serde_json::from_str::<serde_json::Value>(QRIS_EXAMPLE).unwrap()
+    );
+    assert_eq!(
+        value["data"]["invoice_id"],
+        "qri_01JAXF3K9V0QH2M7Z5R8T4W6YC"
+    );
+    let again: WebhookEvent = serde_json::from_value(value).unwrap();
+    assert_eq!(again, example);
+    let expired = verified(
+        r#"{"id":"evt_2","type":"qris_invoice.expired","created_at":2,"data":{"invoice_id":"qri_2","reference":"pay_2","seq":7}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&expired).unwrap(),
+        serde_json::json!({"id": "evt_2", "type": "qris_invoice.expired", "created_at": 2,
+            "data": {"invoice_id": "qri_2", "reference": "pay_2", "seq": 7}})
+    );
 }
 
 #[test]
@@ -424,6 +509,30 @@ fn every_event_type_of_the_docs_reads() {
                 deposit.seq
             ),
             ("dep_1", "k", 1),
+            "{word}"
+        );
+        assert_eq!(event.qris_invoice, None, "{word}");
+    }
+    for (word, want) in [
+        ("qris_invoice.paid", EventType::QrisInvoicePaid),
+        ("qris_invoice.expired", EventType::QrisInvoiceExpired),
+    ] {
+        let body = format!(
+            r#"{{"id":"evt_1","type":"{word}","created_at":1,"data":{{"invoice_id":"qri_1","reference":"pay_1","seq":1}}}}"#
+        );
+        let header = webhook::sign(&v.secret, v.ts, body.as_bytes());
+        let event = webhook::verify(&header, body.as_bytes(), &v.secret, v.ts).unwrap();
+        assert_eq!(event.event_type, want, "{word}");
+        // Every QRIS invoice type carries the invoice ids, and only those types do.
+        assert_eq!(event.deposit, None, "{word}");
+        let invoice = event.qris_invoice.as_ref().unwrap();
+        assert_eq!(
+            (
+                invoice.invoice_id.as_str(),
+                invoice.reference.as_str(),
+                invoice.seq
+            ),
+            ("qri_1", "pay_1", 1),
             "{word}"
         );
     }

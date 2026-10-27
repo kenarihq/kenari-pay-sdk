@@ -9,10 +9,12 @@ use kenari_pay_sdk::address::forwarder::{
     parse_address, parse_salt, ForwarderError, MAX_FEE_BPS,
 };
 use kenari_pay_sdk::address::{self, pins, Expect, Refusal, Trust};
+use kenari_pay_sdk::api::{Api, ApiError};
 use kenari_pay_sdk::webhook;
 use kenari_pay_sdk::wire::{
     Address, AddressKind, CustomerDeposits, Deposit, DepositStatus, DepositsPage, ErrorBody,
-    EventType, Family, Keys, Networks, PoolFile, SweepsPage, WebhookEvent,
+    EventType, Family, Keys, MatchedBy, Networks, PoolFile, QrisInvoice, QrisInvoiceStatus,
+    QrisInvoicesPage, QrisProvider, SweepsPage, WebhookEvent,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -23,11 +25,15 @@ const ATTESTATION: &str = include_str!("../vectors/attestation_vector.json");
 const DEPOSIT: &str = include_str!("../vectors/deposit_confirmed.json");
 const DEPOSITS_PAGE: &str = include_str!("../vectors/deposits_page.json");
 const ERROR: &str = include_str!("../vectors/error_pool_exhausted.json");
+const ERROR_QRIS: &str = include_str!("../vectors/error_qris_unavailable.json");
 const KEYS: &str = include_str!("../vectors/keys_list.json");
 const NETWORKS: &str = include_str!("../vectors/networks.json");
 const POOL_FILE: &str = include_str!("../vectors/pool_file.json");
+const QRIS_INVOICE: &str = include_str!("../vectors/qris_invoice_paid.json");
+const QRIS_PAGE: &str = include_str!("../vectors/qris_invoices_page.json");
 const SWEEPS_PAGE: &str = include_str!("../vectors/sweeps_page.json");
 const WEBHOOK_BODY: &str = include_str!("../vectors/webhook_deposit_confirmed.json");
+const WEBHOOK_QRIS: &str = include_str!("../vectors/webhook_qris_invoice_paid.json");
 const WEBHOOK_VECTOR: &str = include_str!("../vectors/webhook_signature_vector.json");
 
 /// Decode an example, and serialize the result back: the JSON must be the same value, so a field
@@ -58,11 +64,15 @@ fn the_vectors_directory_is_the_contract_files_and_the_forwarder_vectors() {
         "deposit_confirmed.json",
         "deposits_page.json",
         "error_pool_exhausted.json",
+        "error_qris_unavailable.json",
         "keys_list.json",
         "networks.json",
         "pool_file.json",
+        "qris_invoice_paid.json",
+        "qris_invoices_page.json",
         "sweeps_page.json",
         "webhook_deposit_confirmed.json",
+        "webhook_qris_invoice_paid.json",
         "webhook_signature_vector.json",
     ]
     .iter()
@@ -173,6 +183,251 @@ fn every_example_decodes_into_its_wire_type_and_round_trips() {
     assert_eq!(refs.key, deposit.key);
     assert_eq!(refs.deposit_id, deposit.id);
     assert_eq!(refs.seq, deposit.seq);
+}
+
+// ---- the QRIS examples ------------------------------------------------------------------------
+
+/// The EMVCo TLV objects of a QRIS payload, in order: a two digit tag, a two digit length, the
+/// value. Written here from the format, so the examples are checked by code that is not the
+/// gateway's.
+fn tlv(payload: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = payload;
+    while !rest.is_empty() {
+        assert!(rest.len() >= 4, "a truncated TLV head in {payload}");
+        let (tag, after) = rest.split_at(2);
+        let (len, after) = after.split_at(2);
+        let len: usize = len.parse().unwrap();
+        assert!(after.len() >= len, "a truncated TLV value in {payload}");
+        let (value, after) = after.split_at(len);
+        out.push((tag.to_string(), value.to_string()));
+        rest = after;
+    }
+    out
+}
+
+/// CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, no final xor.
+fn crc16(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0xffff;
+    for byte in data {
+        crc ^= u16::from(*byte) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+/// A dynamic QRIS payload that carries `amount_due`: a valid CRC over everything up to and with
+/// `6304`, point of initiation `12`, tag 54 the amount in plain digits, the tags ascending.
+fn assert_dynamic_qris_of(invoice: &QrisInvoice) {
+    let payload = &invoice.qris;
+    assert_eq!(
+        crc16(b"123456789"),
+        0x29b1,
+        "the CRC-16/CCITT-FALSE check value"
+    );
+    let (body, crc) = payload.split_at(payload.len() - 4);
+    assert!(body.ends_with("6304"), "{}: tag 63 is last", invoice.id);
+    assert_eq!(
+        crc,
+        format!("{:04X}", crc16(body.as_bytes())),
+        "{}: CRC",
+        invoice.id
+    );
+    let objects = tlv(payload);
+    let tags: Vec<&str> = objects.iter().map(|(t, _)| t.as_str()).collect();
+    let mut sorted = tags.clone();
+    sorted.sort();
+    assert_eq!(tags, sorted, "{}: tags ascending", invoice.id);
+    let value = |tag: &str| {
+        objects
+            .iter()
+            .find(|(t, _)| t == tag)
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(value("00"), Some("01"));
+    assert_eq!(value("01"), Some("12"), "{}: dynamic", invoice.id);
+    assert_eq!(value("53"), Some("360"), "{}: rupiah", invoice.id);
+    assert_eq!(value("58"), Some("ID"));
+    assert_eq!(
+        value("54"),
+        Some(invoice.amount_due.to_string().as_str()),
+        "{}: the amount is amount_due",
+        invoice.id
+    );
+    assert_eq!(value("59"), Some("KENARI SANDBOX"));
+    // The static QRIS of the brief is the same payload with tag 01 `11` and no tag 54.
+    let static_qris = "00020101021126660014ID.CO.QRIS.WWW01189360091400000000010215ID10290000000010303UMI5204573453033605802ID5914KENARI SANDBOX6007JAKARTA6105101106304D485";
+    let (static_body, static_crc) = static_qris.split_at(static_qris.len() - 4);
+    assert_eq!(static_crc, format!("{:04X}", crc16(static_body.as_bytes())));
+    let without_amount: Vec<(String, String)> = objects
+        .iter()
+        .filter(|(t, _)| t != "54" && t != "63")
+        .map(|(t, v)| {
+            if t == "01" {
+                (t.clone(), "11".to_string())
+            } else {
+                (t.clone(), v.clone())
+            }
+        })
+        .collect();
+    let static_objects: Vec<(String, String)> = tlv(static_qris)
+        .into_iter()
+        .filter(|(t, _)| t != "63")
+        .collect();
+    assert_eq!(
+        without_amount, static_objects,
+        "{}: made from the static QRIS",
+        invoice.id
+    );
+}
+
+#[test]
+fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
+    let invoice: QrisInvoice = round_trip("qris_invoice_paid.json", QRIS_INVOICE);
+    assert_eq!(invoice.status, QrisInvoiceStatus::Paid);
+    assert_eq!(invoice.matched_by, Some(MatchedBy::Feed));
+    assert_eq!(
+        invoice.amount_due,
+        invoice.base_amount + i64::from(invoice.unique_code)
+    );
+    assert!(invoice.unique_code <= 999);
+    assert_eq!(invoice.provider, QrisProvider::Gopay);
+    assert!(invoice.paid_exactly());
+    assert!(invoice.livemode);
+    assert!(invoice.created_at < invoice.expires_at && invoice.expires_at < invoice.match_until);
+    assert_eq!(invoice.payer_issuer.as_deref(), Some("DANA"));
+    assert_dynamic_qris_of(&invoice);
+
+    let page: QrisInvoicesPage = round_trip("qris_invoices_page.json", QRIS_PAGE);
+    assert_eq!(page.invoices.len(), 2);
+    assert_eq!((page.next_seq, page.has_more), (43, false));
+    assert_eq!(
+        page.invoices[0], invoice,
+        "the page holds the single example"
+    );
+    // The second one is open and carries every nullable field as null.
+    let open = &page.invoices[1];
+    assert_eq!(open.status, QrisInvoiceStatus::Open);
+    assert_eq!(open.provider, QrisProvider::Gopay);
+    assert_eq!(
+        (
+            &open.paid_at,
+            &open.paid_amount,
+            &open.payer_issuer,
+            &open.matched_by
+        ),
+        (&None, &None, &None, &None)
+    );
+    assert!(!open.paid_exactly());
+    assert_eq!(
+        open.amount_due,
+        open.base_amount + i64::from(open.unique_code)
+    );
+    assert_eq!(page.next_seq, page.invoices.last().unwrap().seq);
+    for invoice in &page.invoices {
+        assert_dynamic_qris_of(invoice);
+    }
+
+    let event: WebhookEvent = round_trip("webhook_qris_invoice_paid.json", WEBHOOK_QRIS);
+    assert_eq!(event.event_type, EventType::QrisInvoicePaid);
+    assert_eq!(event.deposit, None);
+    let refs = event.qris_invoice.as_ref().unwrap();
+    assert_eq!(refs.invoice_id, invoice.id);
+    assert_eq!(refs.reference, invoice.reference);
+    assert_eq!(refs.seq, invoice.seq);
+
+    let error: ErrorBody = round_trip("error_qris_unavailable.json", ERROR_QRIS);
+    assert_eq!(error.error.code, "unavailable");
+    assert_eq!(
+        Api::decode::<QrisInvoice>(503, ERROR_QRIS.as_bytes()),
+        Err(ApiError::Status {
+            code: 503,
+            error_code: Some("unavailable".into())
+        })
+    );
+}
+
+#[test]
+fn a_qris_invoice_without_livemode_or_with_another_paid_amount_is_not_creditable() {
+    for required in [
+        "livemode",
+        "provider",
+        "status",
+        "amount_due",
+        "unique_code",
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
+        value.as_object_mut().unwrap().remove(required);
+        assert!(
+            serde_json::from_value::<QrisInvoice>(value).is_err(),
+            "{required} is required"
+        );
+    }
+
+    let mut invoice: QrisInvoice = serde_json::from_str(QRIS_INVOICE).unwrap();
+    assert!(invoice.paid_exactly());
+    invoice.paid_amount = Some(invoice.amount_due - 1);
+    assert!(!invoice.paid_exactly(), "underpaid");
+    invoice.paid_amount = Some(invoice.amount_due + 1);
+    assert!(!invoice.paid_exactly(), "overpaid");
+    invoice.paid_amount = None;
+    assert!(!invoice.paid_exactly(), "no amount");
+    invoice.paid_amount = Some(invoice.amount_due);
+    for status in [
+        QrisInvoiceStatus::Open,
+        QrisInvoiceStatus::Expired,
+        QrisInvoiceStatus::Unknown,
+    ] {
+        invoice.status = status;
+        assert!(!invoice.paid_exactly(), "{status:?}");
+    }
+
+    // A status, a match or a provider this SDK does not know still decodes, as `Unknown`.
+    let text = QRIS_INVOICE
+        .replace("\"status\": \"paid\"", "\"status\": \"refunded\"")
+        .replace("\"matched_by\": \"feed\"", "\"matched_by\": \"guess\"")
+        .replace("\"provider\": \"gopay\"", "\"provider\": \"ovo\"");
+    for word in ["refunded", "guess", "ovo"] {
+        assert!(text.contains(word), "the {word} replacement took");
+    }
+    let invoice: QrisInvoice = serde_json::from_str(&text).unwrap();
+    assert_eq!(invoice.status, QrisInvoiceStatus::Unknown);
+    assert_eq!(invoice.matched_by, Some(MatchedBy::Unknown));
+    assert_eq!(invoice.provider, QrisProvider::Unknown);
+    assert!(!invoice.paid_exactly());
+    // A provider the SDK does not know leaves a paid invoice creditable: the status decides.
+    let text = QRIS_INVOICE.replace("\"provider\": \"gopay\"", "\"provider\": \"ovo\"");
+    let invoice: QrisInvoice = serde_json::from_str(&text).unwrap();
+    assert_eq!(invoice.provider, QrisProvider::Unknown);
+    assert!(invoice.paid_exactly());
+
+    // A unique code of 0 is a code like any other: the amount due is the base amount.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
+    value["unique_code"] = 0.into();
+    value["amount_due"] = 50_000.into();
+    value["paid_amount"] = 50_000.into();
+    let invoice: QrisInvoice = serde_json::from_value(value).unwrap();
+    assert_eq!(invoice.unique_code, 0);
+    assert!(invoice.paid_exactly());
+    // A negative code is not a code.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
+    value["unique_code"] = (-1).into();
+    assert!(serde_json::from_value::<QrisInvoice>(value).is_err());
+}
+
+#[test]
+fn a_tampered_qris_payload_fails_the_crc() {
+    let invoice: QrisInvoice = serde_json::from_str(QRIS_INVOICE).unwrap();
+    let tampered = invoice.qris.replace("540550123", "540550124");
+    assert_ne!(tampered, invoice.qris);
+    let (body, crc) = tampered.split_at(tampered.len() - 4);
+    assert_ne!(crc, format!("{:04X}", crc16(body.as_bytes())));
 }
 
 #[test]
