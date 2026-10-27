@@ -9,7 +9,8 @@
 //!
 //! **A verified webhook proves the request came from the gateway. It does not prove the body is
 //! true.** The body carries ids only, and a merchant acts on a re-fetch of the deposit
-//! (`GET /v1/deposits/{key}`), never on the body. Deliveries can arrive late, twice and out of
+//! (`GET /v1/deposits/{key}`) or of the QRIS invoice (`GET /v1/qris/invoices/{id}`), never on the
+//! body. Deliveries can arrive late, twice and out of
 //! order, so a handler must be idempotent and the pull feed stays the backstop.
 //!
 //! ```
@@ -47,8 +48,9 @@ pub enum WebhookError {
     Stale,
     /// The signature does not match, or the secret is empty.
     Mismatch,
-    /// The signature is right and the body is not a webhook event: the envelope is incomplete, or
-    /// a `deposit.*` event has no deposit ids in its `data`.
+    /// The signature is right and the body is not a webhook event: the envelope is incomplete, a
+    /// `deposit.*` event has no deposit ids in its `data`, or a `qris_invoice.*` event has no
+    /// invoice ids in it.
     Body,
 }
 
@@ -73,8 +75,9 @@ impl std::error::Error for WebhookError {}
 /// when it holds, so nothing in an unsigned body is parsed.
 ///
 /// An event type this SDK does not know is [`EventType::Unknown`](crate::wire::EventType::Unknown)
-/// with no `deposit`, and still a success whatever its `data` holds, so answer 2xx and ignore it.
-/// A `deposit.*` event whose `data` is not `deposit_id`, `key` and `seq` is
+/// with no `deposit` and no `qris_invoice`, and still a success whatever its `data` holds, so
+/// answer 2xx and ignore it. A `deposit.*` event whose `data` is not `deposit_id`, `key` and
+/// `seq`, or a `qris_invoice.*` event whose `data` is not `invoice_id`, `reference` and `seq`, is
 /// [`WebhookError::Body`].
 pub fn verify(
     signature_header: &str,

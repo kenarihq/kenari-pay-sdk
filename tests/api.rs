@@ -2,8 +2,8 @@
 
 use kenari_pay_sdk::api::{Api, ApiError, HttpRequest, Method};
 use kenari_pay_sdk::wire::{
-    Address, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys, Networks, PoolFile,
-    PoolImported, SweepsPage,
+    Address, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys,
+    Networks, PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, QrisProvider, SweepsPage,
 };
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
@@ -45,6 +45,22 @@ fn a_read_is_a_get_with_the_key_and_no_body() {
             api().customer_deposits("usr_acc_7f3a", 10).unwrap(),
             "/v1/customers/usr_acc_7f3a/deposits?limit=10",
         ),
+        (
+            api()
+                .qris_invoice("qri_01JAXF3K9V0QH2M7Z5R8T4W6YC")
+                .unwrap(),
+            "/v1/qris/invoices/qri_01JAXF3K9V0QH2M7Z5R8T4W6YC",
+        ),
+        (
+            api()
+                .qris_invoice("pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C")
+                .unwrap(),
+            "/v1/qris/invoices/pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+        ),
+        (
+            api().qris_invoices(42, 100),
+            "/v1/qris/invoices?after_seq=42&limit=100",
+        ),
     ];
     for (request, path) in calls {
         assert_eq!(request.method, Method::Get, "{path}");
@@ -83,6 +99,55 @@ fn a_write_is_a_post_with_a_json_body_and_its_content_type() {
     assert_eq!(request.headers, vec![bearer(), json_header()]);
     let sent: PoolFile = serde_json::from_slice(request.body.as_deref().unwrap()).unwrap();
     assert_eq!(sent, file);
+
+    let invoice = CreateQrisInvoice::new("pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C", "usr_acc_7f3a", 50_000);
+    let request = api().create_qris_invoice(&invoice);
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(request.url, format!("{BASE}/v1/qris/invoices"));
+    assert_eq!(request.headers, vec![bearer(), json_header()]);
+    // Exactly the documented body, with the amount as a JSON integer and the optional fields
+    // left out, so the gateway's defaults apply.
+    assert_eq!(
+        body_json(&request),
+        serde_json::json!({
+            "reference": "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+            "customer_ref": "usr_acc_7f3a",
+            "amount_idr": 50000
+        })
+    );
+    // The optional fields are sent when set, a code bound of 0 included.
+    for (max, provider, word) in [
+        (99, QrisProvider::Gopay, "gopay"),
+        (0, QrisProvider::Shopee, "shopee"),
+        (999, QrisProvider::Simulated, "simulated"),
+    ] {
+        let invoice = CreateQrisInvoice {
+            max_unique_code: Some(max),
+            provider: Some(provider),
+            ..CreateQrisInvoice::new("pay_1", "usr_1", 50_350)
+        };
+        assert_eq!(
+            body_json(&api().create_qris_invoice(&invoice)),
+            serde_json::json!({
+                "reference": "pay_1",
+                "customer_ref": "usr_1",
+                "amount_idr": 50350,
+                "max_unique_code": max,
+                "provider": word
+            })
+        );
+    }
+    let only_max = CreateQrisInvoice {
+        max_unique_code: Some(99),
+        ..CreateQrisInvoice::new("pay_1", "usr_1", 50_350)
+    };
+    let body = body_json(&api().create_qris_invoice(&only_max));
+    assert_eq!(body["max_unique_code"], 99);
+    assert!(body.get("provider").is_none());
+    // And a body without them reads back with `None`.
+    let read: CreateQrisInvoice =
+        serde_json::from_str(r#"{"reference":"r","customer_ref":"c","amount_idr":1000}"#).unwrap();
+    assert_eq!(read, CreateQrisInvoice::new("r", "c", 1000));
 }
 
 #[test]
@@ -144,6 +209,11 @@ fn a_dot_segment_is_refused_by_every_call_that_takes_a_path_value() {
             Err(ApiError::Argument),
             "reissue {value:?}"
         );
+        assert_eq!(
+            api().qris_invoice(value),
+            Err(ApiError::Argument),
+            "qris_invoice {value:?}"
+        );
     }
     // The refusal is fixed text and holds no value.
     assert_eq!(
@@ -164,6 +234,14 @@ fn a_value_that_looks_encoded_stays_one_encoded_segment() {
     assert_eq!(request.url, format!("{BASE}/v1/deposits/%252E%252E"));
     let request = api().reissue(".%2e").unwrap();
     assert_eq!(request.url, format!("{BASE}/v1/addresses/.%252e/reissue"));
+    // A merchant's reference is its own text, so it stays one segment whatever it holds.
+    let request = api().qris_invoice("../invoices?after_seq=0").unwrap();
+    assert_eq!(
+        request.url,
+        format!("{BASE}/v1/qris/invoices/..%2Finvoices%3Fafter_seq%3D0")
+    );
+    let request = api().qris_invoice("%2e%2e").unwrap();
+    assert_eq!(request.url, format!("{BASE}/v1/qris/invoices/%252e%252e"));
     // A value with a slash is one segment, never two.
     let request = api().customer_deposits("a/b", 10).unwrap();
     assert_eq!(
@@ -344,6 +422,18 @@ fn every_example_decodes_through_the_call_that_returns_it() {
     )
     .unwrap();
     assert_eq!((imported.imported, imported.next_index), (2, 2));
+    // A new QRIS invoice is a 201, the one already made for the reference a 200.
+    for status in [200, 201] {
+        let invoice: QrisInvoice =
+            Api::decode(status, include_bytes!("../vectors/qris_invoice_paid.json")).unwrap();
+        assert_eq!(invoice.amount_due, 50_123);
+    }
+    let page: QrisInvoicesPage =
+        Api::decode(200, include_bytes!("../vectors/qris_invoices_page.json")).unwrap();
+    assert_eq!(
+        (page.invoices.len(), page.next_seq, page.has_more),
+        (2, 43, false)
+    );
 }
 
 #[test]
@@ -455,6 +545,31 @@ fn a_404_on_a_deposit_is_none_and_the_other_statuses_are_not() {
     ));
     // `decode` itself never turns a 404 into a success.
     assert!(Api::decode::<Deposit>(404, missing).is_err());
+    // The same for a QRIS invoice.
+    assert_eq!(Api::decode_optional::<QrisInvoice>(404, missing), Ok(None));
+    let found: Option<QrisInvoice> =
+        Api::decode_optional(200, include_bytes!("../vectors/qris_invoice_paid.json")).unwrap();
+    assert_eq!(found.unwrap().id, "qri_01JAXF3K9V0QH2M7Z5R8T4W6YC");
+}
+
+#[test]
+fn every_qris_refusal_the_docs_name_keeps_its_code() {
+    for (status, code) in [
+        (403, "forbidden"),
+        (503, "unavailable"),
+        (429, "rate_limited"),
+        (400, "invalid_request"),
+    ] {
+        let body = serde_json::json!({"error": {"code": code, "message": "m"}}).to_string();
+        assert_eq!(
+            Api::decode::<QrisInvoice>(status, body.as_bytes()),
+            Err(ApiError::Status {
+                code: status,
+                error_code: Some(code.into())
+            }),
+            "{code}"
+        );
+    }
 }
 
 #[test]

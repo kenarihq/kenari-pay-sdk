@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.0 (2026-10-27)
+
+QRIS invoices, the gateway's rupiah rail.
+
+- `wire`: `QrisInvoice`, `QrisInvoicesPage`, `QrisInvoiceStatus` (`open`, `paid`, `expired`),
+  `MatchedBy` (`feed`, `operator`, `simulated`) and `QrisProvider` (`gopay`, `shopee`,
+  `simulated`), each with `Unknown` for a word the SDK does not know. `CreateQrisInvoice` with the
+  optional `max_unique_code` and `provider`, left out of the body when `None`.
+  `QrisInvoice::paid_exactly` says whether a paid invoice carries exactly its amount due.
+  Amounts are whole rupiah as integers, and `unique_code` is 0 to 999.
+- `wire`: the webhook types `qris_invoice.paid` and `qris_invoice.expired`, whose `data` is a
+  `QrisInvoiceRef` (`invoice_id`, `reference`, `seq`) in the new `WebhookEvent::qris_invoice`. A
+  `qris_invoice.*` event whose `data` is not that is a body error, as for deposits. An unknown type
+  still verifies with both `deposit` and `qris_invoice` as `None`. `EventType::is_deposit` and
+  `EventType::is_qris_invoice`.
+- `api` and `client`: `create_qris_invoice`, `qris_invoice` (a 404 is `None`) and `qris_invoices`.
+- `feed`: `Cursor::qris_invoices` and `Feed::QrisInvoices`.
+- `vectors/`: the gateway's `qris_invoice_paid.json`, `qris_invoices_page.json`,
+  `webhook_qris_invoice_paid.json` and `error_qris_unavailable.json`.
+
+Breaking for code that builds a `WebhookEvent` by hand or matches `EventType` or `Feed`
+exhaustively: the new field and variants.
+
 ## 0.1.0 (2026-10-21)
 
 The first version of the merchant SDK for kenari-pay.

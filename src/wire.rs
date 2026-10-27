@@ -11,8 +11,9 @@
 //!   hold the item for a person rather than guessing.
 //! - `livemode` and `simulated` are required, with no default. An answer that does not say which
 //!   network it comes from cannot be told apart from a sandbox one, so it fails to decode.
-//! - Amounts stay decimal strings, because a token amount can exceed 2^53. [`Deposit::amount_units`]
-//!   parses one.
+//! - Token amounts stay decimal strings, because a token amount can exceed 2^53.
+//!   [`Deposit::amount_units`] parses one. QRIS amounts are whole rupiah as JSON integers, which
+//!   never come near 2^53.
 
 use std::collections::BTreeMap;
 
@@ -112,6 +113,12 @@ pub enum EventType {
     /// `deposit.reverted`
     #[serde(rename = "deposit.reverted")]
     DepositReverted,
+    /// `qris_invoice.paid`
+    #[serde(rename = "qris_invoice.paid")]
+    QrisInvoicePaid,
+    /// `qris_invoice.expired`
+    #[serde(rename = "qris_invoice.expired")]
+    QrisInvoiceExpired,
     /// An event type this SDK does not know. Answer 2xx and ignore it.
     #[serde(other, rename = "unknown")]
     Unknown,
@@ -125,7 +132,112 @@ impl EventType {
             EventType::DepositConfirmed => "deposit.confirmed",
             EventType::DepositOrphaned => "deposit.orphaned",
             EventType::DepositReverted => "deposit.reverted",
+            EventType::QrisInvoicePaid => "qris_invoice.paid",
+            EventType::QrisInvoiceExpired => "qris_invoice.expired",
             EventType::Unknown => "unknown",
+        }
+    }
+
+    /// Whether the event is about a deposit, so its `data` is a [`DepositRef`].
+    pub fn is_deposit(self) -> bool {
+        matches!(
+            self,
+            EventType::DepositDetected
+                | EventType::DepositConfirmed
+                | EventType::DepositOrphaned
+                | EventType::DepositReverted
+        )
+    }
+
+    /// Whether the event is about a QRIS invoice, so its `data` is a [`QrisInvoiceRef`].
+    pub fn is_qris_invoice(self) -> bool {
+        matches!(
+            self,
+            EventType::QrisInvoicePaid | EventType::QrisInvoiceExpired
+        )
+    }
+}
+
+/// Where a QRIS invoice is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QrisInvoiceStatus {
+    /// Waiting for the payment. Do not credit.
+    Open,
+    /// A payment was matched to it. See [`QrisInvoice::paid_exactly`] before crediting.
+    Paid,
+    /// Its time to pay ran out without a match. A late payment can still move it to `paid` until
+    /// `match_until`, so keep it pending until then.
+    Expired,
+    /// A status this SDK does not know. Never credit it.
+    #[serde(other)]
+    Unknown,
+}
+
+impl QrisInvoiceStatus {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QrisInvoiceStatus::Open => "open",
+            QrisInvoiceStatus::Paid => "paid",
+            QrisInvoiceStatus::Expired => "expired",
+            QrisInvoiceStatus::Unknown => "unknown",
+        }
+    }
+}
+
+/// The kind of QRIS account an invoice collects with. The merchant never talks to it: the gateway
+/// holds the account and watches its feed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QrisProvider {
+    /// A GoPay merchant account (GoBiz).
+    Gopay,
+    /// A ShopeePay merchant account.
+    Shopee,
+    /// The sandbox's simulated account. Never on live.
+    Simulated,
+    /// A provider this SDK does not know. The invoice is still read, and its status still decides.
+    /// Never send it in a request, no gateway accepts it.
+    #[serde(other)]
+    Unknown,
+}
+
+impl QrisProvider {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QrisProvider::Gopay => "gopay",
+            QrisProvider::Shopee => "shopee",
+            QrisProvider::Simulated => "simulated",
+            QrisProvider::Unknown => "unknown",
+        }
+    }
+}
+
+/// How a paid QRIS invoice was matched to its payment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchedBy {
+    /// The gateway's watcher found exactly one payment of the amount due in the invoice's window.
+    Feed,
+    /// An operator assigned a payment by hand. `paid_amount` can differ from `amount_due`.
+    Operator,
+    /// `POST /v1/sandbox/qris/invoices/{id}/pay` on the sandbox. Never on live.
+    Simulated,
+    /// A way this SDK does not know. Hold the invoice for a person.
+    #[serde(other)]
+    Unknown,
+}
+
+impl MatchedBy {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MatchedBy::Feed => "feed",
+            MatchedBy::Operator => "operator",
+            MatchedBy::Simulated => "simulated",
+            MatchedBy::Unknown => "unknown",
         }
     }
 }
@@ -382,6 +494,109 @@ pub struct SweepsPage {
     pub has_more: bool,
 }
 
+/// The body of `POST /v1/qris/invoices`: ask for a QRIS invoice.
+///
+/// The same `reference` again returns the invoice made the first time, whatever the rest of the
+/// body says, so a retry after a timeout never makes a second invoice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateQrisInvoice {
+    /// The merchant's own id for this payment, 1 to 128 characters, unique per merchant.
+    pub reference: String,
+    /// The merchant's id for the customer.
+    pub customer_ref: String,
+    /// The base amount in whole rupiah, 1000 to 9999000. The customer pays this plus a unique
+    /// code of Rp0 to Rp999, the invoice's `amount_due`.
+    pub amount_idr: i64,
+    /// The largest unique code wanted, 0 to 999. The gateway picks the smallest free code up to
+    /// it, and above it up to 999 only when every code up to it is taken. `None` leaves it out of
+    /// the body, which the gateway reads as 999.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_unique_code: Option<u16>,
+    /// The kind of QRIS account to collect with. `None` leaves it out of the body, and the gateway
+    /// picks the merchant's usable account of the lowest priority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<QrisProvider>,
+}
+
+impl CreateQrisInvoice {
+    /// The request for `amount_idr` with no `max_unique_code` and no `provider`, so the gateway's
+    /// defaults apply.
+    pub fn new(reference: &str, customer_ref: &str, amount_idr: i64) -> CreateQrisInvoice {
+        CreateQrisInvoice {
+            reference: reference.to_string(),
+            customer_ref: customer_ref.to_string(),
+            amount_idr,
+            max_unique_code: None,
+            provider: None,
+        }
+    }
+}
+
+/// A QRIS invoice, as `POST /v1/qris/invoices`, `GET /v1/qris/invoices/{id_or_reference}` and the
+/// QRIS feed show it.
+///
+/// Amounts are whole rupiah, as JSON integers (no smallest unit strings as for tokens).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisInvoice {
+    /// `qri_...`
+    pub id: String,
+    /// The merchant's own id for the payment, echoed.
+    pub reference: String,
+    /// The merchant's id for the customer, echoed.
+    pub customer_ref: String,
+    /// The kind of QRIS account the invoice collects with.
+    pub provider: QrisProvider,
+    /// Where the invoice is in its life.
+    pub status: QrisInvoiceStatus,
+    /// The base amount the merchant asked for, in rupiah.
+    pub base_amount: i64,
+    /// The unique code added to the base amount, Rp0 to Rp999.
+    pub unique_code: u16,
+    /// What the customer pays, `base_amount + unique_code`, in rupiah. Show it with the code as
+    /// its own line.
+    pub amount_due: i64,
+    /// The dynamic QRIS payload to render as a QR code. It carries `amount_due`.
+    pub qris: String,
+    /// When the invoice was made, in unix seconds.
+    pub created_at: i64,
+    /// When the time to pay ends and the invoice turns `expired`, in unix seconds.
+    pub expires_at: i64,
+    /// Until when a late payment of `amount_due` is still matched to this invoice, in unix seconds.
+    pub match_until: i64,
+    /// When it was paid, null until then.
+    pub paid_at: Option<i64>,
+    /// What was paid, in rupiah, null until then.
+    pub paid_amount: Option<i64>,
+    /// The payer's QRIS issuer when the feed names it, such as `DANA`.
+    pub payer_issuer: Option<String>,
+    /// How the payment was matched, null until paid.
+    pub matched_by: Option<MatchedBy>,
+    /// The feed position, reassigned on every state change.
+    pub seq: i64,
+    /// `true` on the live gateway, `false` on the sandbox.
+    pub livemode: bool,
+}
+
+impl QrisInvoice {
+    /// `true` when the invoice is `paid` and `paid_amount` is exactly `amount_due`. Only such an
+    /// invoice is safe to credit without a person. A paid invoice with another amount was
+    /// assigned by an operator: hold it for a person.
+    pub fn paid_exactly(&self) -> bool {
+        self.status == QrisInvoiceStatus::Paid && self.paid_amount == Some(self.amount_due)
+    }
+}
+
+/// The answer of `GET /v1/qris/invoices`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisInvoicesPage {
+    /// The invoices with `seq` above the cursor, ascending.
+    pub invoices: Vec<QrisInvoice>,
+    /// The last `seq` of the page, or the cursor when the page is empty.
+    pub next_seq: i64,
+    /// Whether more follow.
+    pub has_more: bool,
+}
+
 /// The body of a non-2xx answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorBody {
@@ -411,30 +626,63 @@ pub struct DepositRef {
     pub seq: i64,
 }
 
+/// The ids a QRIS invoice webhook carries. Like [`DepositRef`] it carries nothing else on purpose,
+/// so act on a re-fetch of the invoice and never on the webhook.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisInvoiceRef {
+    /// `qri_...`, the id to re-fetch with `GET /v1/qris/invoices/{id}`.
+    pub invoice_id: String,
+    /// The merchant's own id for the payment.
+    pub reference: String,
+    /// The feed position when the event was made.
+    pub seq: i64,
+}
+
 /// A webhook event, after [`crate::webhook::verify`] has checked its signature.
 ///
-/// The envelope (`id`, `type`, `created_at`) is read first, and the ids of a deposit only for a
-/// `deposit.*` type. So an event of a type this SDK does not know is still an event, with
-/// [`EventType::Unknown`] and no `deposit`, whatever its `data` holds. Answer it 2xx and ignore it.
-/// A deposit type whose `data` is not `deposit_id`, `key` and `seq` is not an event at all, and
-/// fails to decode.
+/// The envelope (`id`, `type`, `created_at`) is read first, and `data` only for a type this SDK
+/// knows: the ids of a deposit for a `deposit.*` type, the ids of a QRIS invoice for a
+/// `qris_invoice.*` type. So an event of a type this SDK does not know is still an event, with
+/// [`EventType::Unknown`] and neither `deposit` nor `qris_invoice`, whatever its `data` holds.
+/// Answer it 2xx and ignore it. A known type whose `data` is not the ids of that type is not an
+/// event at all, and fails to decode.
 ///
 /// An `Unknown` event keeps nothing of its type and its `data`, so it serializes as the envelope
 /// with the type `unknown` and no `data`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "RawWebhookEvent")]
 pub struct WebhookEvent {
     /// `evt_...`
     pub id: String,
     /// The event type.
-    #[serde(rename = "type")]
     pub event_type: EventType,
     /// When the event was made, in unix seconds.
     pub created_at: i64,
-    /// The ids of the deposit, `Some` for every deposit type and `None` for
-    /// [`EventType::Unknown`]. On the wire this is `data`.
-    #[serde(rename = "data", skip_serializing_if = "Option::is_none")]
+    /// The ids of the deposit, `Some` for every deposit type and `None` for every other type. On
+    /// the wire this is `data`.
     pub deposit: Option<DepositRef>,
+    /// The ids of the QRIS invoice, `Some` for every `qris_invoice.*` type and `None` for every
+    /// other type. On the wire this is `data`.
+    pub qris_invoice: Option<QrisInvoiceRef>,
+}
+
+impl Serialize for WebhookEvent {
+    /// The envelope, and `data` from whichever of `deposit` and `qris_invoice` is set. When both
+    /// are set, which decoding never makes, `deposit` wins.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let has_data = self.deposit.is_some() || self.qris_invoice.is_some();
+        let mut out = serializer.serialize_struct("WebhookEvent", if has_data { 4 } else { 3 })?;
+        out.serialize_field("id", &self.id)?;
+        out.serialize_field("type", &self.event_type)?;
+        out.serialize_field("created_at", &self.created_at)?;
+        if let Some(deposit) = &self.deposit {
+            out.serialize_field("data", deposit)?;
+        } else if let Some(invoice) = &self.qris_invoice {
+            out.serialize_field("data", invoice)?;
+        }
+        out.end()
+    }
 }
 
 /// The envelope of a webhook with its `data` still unread, so the type decides how `data` is read.
@@ -452,21 +700,23 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
     type Error = &'static str;
 
     fn try_from(raw: RawWebhookEvent) -> Result<WebhookEvent, Self::Error> {
-        let deposit = match raw.event_type {
-            EventType::DepositDetected
-            | EventType::DepositConfirmed
-            | EventType::DepositOrphaned
-            | EventType::DepositReverted => Some(
+        let (mut deposit, mut qris_invoice) = (None, None);
+        if raw.event_type.is_deposit() {
+            deposit = Some(
                 serde_json::from_value(raw.data)
                     .map_err(|_| "a deposit event needs data with deposit_id, key and seq")?,
-            ),
-            EventType::Unknown => None,
-        };
+            );
+        } else if raw.event_type.is_qris_invoice() {
+            qris_invoice = Some(serde_json::from_value(raw.data).map_err(|_| {
+                "a QRIS invoice event needs data with invoice_id, reference and seq"
+            })?);
+        }
         Ok(WebhookEvent {
             id: raw.id,
             event_type: raw.event_type,
             created_at: raw.created_at,
             deposit,
+            qris_invoice,
         })
     }
 }
@@ -591,6 +841,15 @@ mod tests {
         assert_eq!(event, EventType::Unknown);
         let key: KeyStatus = serde_json::from_str("\"paused\"").unwrap();
         assert_eq!(key, KeyStatus::Unknown);
+        let invoice: QrisInvoiceStatus = serde_json::from_str("\"refunded\"").unwrap();
+        assert_eq!(invoice, QrisInvoiceStatus::Unknown);
+        let matched: MatchedBy = serde_json::from_str("\"guess\"").unwrap();
+        assert_eq!(matched, MatchedBy::Unknown);
+        let provider: QrisProvider = serde_json::from_str("\"ovo\"").unwrap();
+        assert_eq!(provider, QrisProvider::Unknown);
+        let event: EventType = serde_json::from_str("\"qris_invoice.refunded\"").unwrap();
+        assert_eq!(event, EventType::Unknown);
+        assert!(serde_json::from_str::<QrisInvoiceStatus>("1").is_err());
         // A value that is not text is still an error, not an `Unknown`.
         assert!(serde_json::from_str::<DepositStatus>("7").is_err());
         assert!(serde_json::from_str::<DepositStatus>("null").is_err());
@@ -617,11 +876,56 @@ mod tests {
             ("deposit.confirmed", EventType::DepositConfirmed),
             ("deposit.orphaned", EventType::DepositOrphaned),
             ("deposit.reverted", EventType::DepositReverted),
+            ("qris_invoice.paid", EventType::QrisInvoicePaid),
+            ("qris_invoice.expired", EventType::QrisInvoiceExpired),
         ] {
             let json = format!("\"{word}\"");
             assert_eq!(serde_json::from_str::<EventType>(&json).unwrap(), event);
             assert_eq!(serde_json::to_string(&event).unwrap(), json);
             assert_eq!(event.as_str(), word);
+            assert_eq!(event.is_deposit(), word.starts_with("deposit."), "{word}");
+            assert_eq!(
+                event.is_qris_invoice(),
+                word.starts_with("qris_invoice."),
+                "{word}"
+            );
+        }
+        assert!(!EventType::Unknown.is_deposit() && !EventType::Unknown.is_qris_invoice());
+        for (word, status) in [
+            ("open", QrisInvoiceStatus::Open),
+            ("paid", QrisInvoiceStatus::Paid),
+            ("expired", QrisInvoiceStatus::Expired),
+        ] {
+            let json = format!("\"{word}\"");
+            assert_eq!(
+                serde_json::from_str::<QrisInvoiceStatus>(&json).unwrap(),
+                status
+            );
+            assert_eq!(serde_json::to_string(&status).unwrap(), json);
+            assert_eq!(status.as_str(), word);
+        }
+        for (word, matched) in [
+            ("feed", MatchedBy::Feed),
+            ("operator", MatchedBy::Operator),
+            ("simulated", MatchedBy::Simulated),
+        ] {
+            let json = format!("\"{word}\"");
+            assert_eq!(serde_json::from_str::<MatchedBy>(&json).unwrap(), matched);
+            assert_eq!(serde_json::to_string(&matched).unwrap(), json);
+            assert_eq!(matched.as_str(), word);
+        }
+        for (word, provider) in [
+            ("gopay", QrisProvider::Gopay),
+            ("shopee", QrisProvider::Shopee),
+            ("simulated", QrisProvider::Simulated),
+        ] {
+            let json = format!("\"{word}\"");
+            assert_eq!(
+                serde_json::from_str::<QrisProvider>(&json).unwrap(),
+                provider
+            );
+            assert_eq!(serde_json::to_string(&provider).unwrap(), json);
+            assert_eq!(provider.as_str(), word);
         }
         assert_eq!(Family::Evm.as_str(), "evm");
         assert_eq!(Family::Solana.as_str(), "solana");

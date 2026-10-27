@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use crate::api::{Api, ApiError, HttpRequest, Method};
 use crate::wire::{
-    Address, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys, Networks, PoolFile,
-    PoolImported, SweepsPage,
+    Address, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys,
+    Networks, PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, SweepsPage,
 };
 
 /// How long the default client waits to connect.
@@ -209,6 +209,35 @@ impl Client {
     /// `GET /v1/sweeps?after_seq=&limit=`. See [`crate::feed`] for the cursor rule.
     pub async fn sweeps(&self, after_seq: i64, limit: u32) -> Result<SweepsPage, ClientError> {
         self.call(self.api.sweeps(after_seq, limit)).await
+    }
+
+    /// `POST /v1/qris/invoices`. The same `reference` again returns the same invoice, so a retry
+    /// after a timeout is safe. See [`Api::create_qris_invoice`] for the refusals.
+    pub async fn create_qris_invoice(
+        &self,
+        invoice: &CreateQrisInvoice,
+    ) -> Result<QrisInvoice, ClientError> {
+        self.call(self.api.create_qris_invoice(invoice)).await
+    }
+
+    /// `GET /v1/qris/invoices/{id_or_reference}`, with a 404 as `Ok(None)`. An empty, `.` or `..`
+    /// value is refused before anything is sent, as [`ApiError::Argument`] in
+    /// [`ClientError::Api`].
+    pub async fn qris_invoice(
+        &self,
+        id_or_reference: &str,
+    ) -> Result<Option<QrisInvoice>, ClientError> {
+        let (status, body) = self.send(self.api.qris_invoice(id_or_reference)?).await?;
+        Ok(Api::decode_optional(status, &body)?)
+    }
+
+    /// `GET /v1/qris/invoices?after_seq=&limit=`. See [`crate::feed`] for the cursor rule.
+    pub async fn qris_invoices(
+        &self,
+        after_seq: i64,
+        limit: u32,
+    ) -> Result<QrisInvoicesPage, ClientError> {
+        self.call(self.api.qris_invoices(after_seq, limit)).await
     }
 
     /// `GET /v1/keys`, for a merchant on pool addresses.

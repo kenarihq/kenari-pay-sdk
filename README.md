@@ -173,7 +173,11 @@ fn on_webhook(signature: &str, body: &[u8], secret: &str, now: i64) -> Result<()
         // The body carries ids only. Re-fetch `deposit.key` and act on that.
         let _key = &deposit.key;
     }
-    // `deposit` is `None` for an event type this SDK does not know. Ignore it and answer 2xx.
+    if let Some(invoice) = &event.qris_invoice {
+        // The same for a QRIS invoice: re-fetch `invoice.invoice_id` and act on that.
+        let _id = &invoice.invoice_id;
+    }
+    // Both are `None` for an event type this SDK does not know. Ignore it and answer 2xx.
     Ok(()) // answer 2xx fast
 }
 ```
@@ -199,11 +203,61 @@ the gateway and not that the body is true, so never act on the body.
 - Amounts are decimal strings. `Deposit::amount_units()` parses one and gives `None` for anything
   that is not plain digits.
 
+### 7. QRIS invoices, if the operator enabled them
+
+A merchant the operator enabled QRIS for can also take rupiah. The gateway holds a QRIS merchant
+account, adds a unique code of Rp0 to Rp999 to your amount so each open invoice of an amount is
+told apart, and marks the invoice paid when exactly that amount lands.
+
+```rust
+use kenari_pay_sdk::api::{Api, ApiError, HttpRequest};
+use kenari_pay_sdk::wire::{CreateQrisInvoice, MatchedBy, QrisInvoice};
+
+/// The request for an invoice. `reference` is your own payment id: the same one again returns the
+/// same invoice, so a retry after a timeout is safe.
+fn ask(api: &Api, payment_id: &str, customer_ref: &str, amount_idr: i64) -> HttpRequest {
+    let invoice = CreateQrisInvoice {
+        // Keep the code small, so the total stays close to your amount.
+        max_unique_code: Some(99),
+        ..CreateQrisInvoice::new(payment_id, customer_ref, amount_idr)
+    };
+    api.create_qris_invoice(&invoice)
+}
+
+/// Show `qris` as a QR code and `amount_due` as the total, with the code as its own line.
+fn show(status: u16, body: &[u8]) -> Result<(String, i64), ApiError> {
+    let invoice: QrisInvoice = Api::decode(status, body)?;
+    Ok((invoice.qris, invoice.amount_due))
+}
+
+/// After a `qris_invoice.paid` webhook or a feed item: re-fetch with `api.qris_invoice(id)` and
+/// decide on that answer.
+fn creditable(invoice: &QrisInvoice, live: bool) -> bool {
+    invoice.livemode == live
+        && invoice.paid_exactly()
+        && !(live && invoice.matched_by == Some(MatchedBy::Simulated))
+}
+```
+
+- Credit an invoice once per `id`, after a re-fetch, only when `paid_exactly()` holds: `status` is
+  `paid` and `paid_amount` is `amount_due`. A paid invoice with another amount was assigned by an
+  operator, so hold it for a person.
+- `expired` is not final. A payment that lands before `match_until` still turns it `paid`, so keep
+  the payment pending until then.
+- `matched_by` `simulated` comes only from `POST /v1/sandbox/qris/invoices/{id}/pay` on the
+  sandbox. On live it means something is wrong: stop and alert a person.
+- The refusals are `403 forbidden` (QRIS not enabled), `503 unavailable` (no account can take the
+  payment right now, or every code of the amount is taken) and `429 rate_limited` (the daily cap).
+  Offer the customer another way to pay.
+- The feed `GET /v1/qris/invoices` follows the cursor rule above, with `Cursor::qris_invoices` and
+  at most 100 invoices a page.
+
 ## Tests against the gateway's own examples
 
 `vectors/` holds byte copies of the gateway's `contract/*.json` and of
 `contracts/vectors/addresses.json`. The tests decode every example into its wire type, run the 20
-forwarder vectors and the webhook and attestation vectors, and refuse a tampered copy of each.
+forwarder vectors and the webhook and attestation vectors, check the QRIS payload of each invoice
+example (its CRC, and the amount it carries is `amount_due`), and refuse a tampered copy of each.
 `scripts/sync-vectors.sh <kenari-pay checkout>` refreshes the copy. A language that gets an SDK
 later runs the same vectors.
 

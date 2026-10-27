@@ -1,14 +1,14 @@
 [package]
 name = "kenari-pay-sdk"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.97"
-description = "Merchant SDK for the kenari-pay deposit gateway: wire types, address check, webhook check and request building."
+description = "Merchant SDK for the kenari-pay deposit gateway: wire types, address check, webhook check, QRIS invoices and request building."
 readme = "README.md"
 repository = "https://github.com/kenarihq/kenari-pay-sdk"
 license = "MIT OR Apache-2.0"
 publish = false
-keywords = ["kenari-pay", "stablecoin", "deposits", "usdc"]
+keywords = ["kenari-pay", "stablecoin", "deposits", "usdc", "qris"]
 categories = ["api-bindings", "cryptography::cryptocurrencies"]
 include = [
     "/src",

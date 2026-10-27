@@ -1,0 +1,46 @@
+{
+  "invoices": [
+    {
+      "id": "qri_01JAXF3K9V0QH2M7Z5R8T4W6YC",
+      "reference": "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+      "customer_ref": "usr_acc_7f3a",
+      "provider": "gopay",
+      "status": "paid",
+      "base_amount": 50000,
+      "unique_code": 123,
+      "amount_due": 50123,
+      "qris": "00020101021226660014ID.CO.QRIS.WWW01189360091400000000010215ID10290000000010303UMI5204573453033605405501235802ID5914KENARI SANDBOX6007JAKARTA6105101106304D142",
+      "created_at": 1760700000,
+      "expires_at": 1760700900,
+      "match_until": 1760704500,
+      "paid_at": 1760700400,
+      "paid_amount": 50123,
+      "payer_issuer": "DANA",
+      "matched_by": "feed",
+      "seq": 42,
+      "livemode": true
+    },
+    {
+      "id": "qri_01JAXF4A1B2C3D4E5F6G7H8J9K",
+      "reference": "pay_01JAXF4A1B2C3D4E5F6G7H8J9M",
+      "customer_ref": "usr_acc_7f3a",
+      "provider": "gopay",
+      "status": "open",
+      "base_amount": 25000,
+      "unique_code": 7,
+      "amount_due": 25007,
+      "qris": "00020101021226660014ID.CO.QRIS.WWW01189360091400000000010215ID10290000000010303UMI5204573453033605405250075802ID5914KENARI SANDBOX6007JAKARTA61051011063047DF9",
+      "created_at": 1760700500,
+      "expires_at": 1760701400,
+      "match_until": 1760705000,
+      "paid_at": null,
+      "paid_amount": null,
+      "payer_issuer": null,
+      "matched_by": null,
+      "seq": 43,
+      "livemode": true
+    }
+  ],
+  "next_seq": 43,
+  "has_more": false
+}

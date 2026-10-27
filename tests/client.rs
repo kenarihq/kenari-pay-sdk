@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use kenari_pay_sdk::api::ApiError;
 use kenari_pay_sdk::client::{default_http, Client, ClientError, CONNECT_TIMEOUT, TOTAL_TIMEOUT};
-use kenari_pay_sdk::wire::Family;
+use kenari_pay_sdk::wire::{CreateQrisInvoice, Family, QrisInvoiceStatus};
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
 
@@ -153,6 +153,9 @@ async fn every_call_reaches_its_route() {
             200,
             r#"{"imported":2,"family":"evm","key_epoch":1,"next_index":2}"#,
         ),
+        reply(201, include_str!("../vectors/qris_invoice_paid.json")),
+        reply(200, include_str!("../vectors/qris_invoice_paid.json")),
+        reply(200, include_str!("../vectors/qris_invoices_page.json")),
     ]);
     let client = Client::new(&base, KEY).unwrap();
     assert_eq!(client.deposits(42, 100).await.unwrap().next_seq, 43);
@@ -170,6 +173,16 @@ async fn every_call_reaches_its_route() {
     assert_eq!(client.register_key(2, "00").await.unwrap().key_epoch, 2);
     let file = serde_json::from_str(include_str!("../vectors/pool_file.json")).unwrap();
     assert_eq!(client.import_pool(&file).await.unwrap().imported, 2);
+    let invoice = CreateQrisInvoice {
+        max_unique_code: Some(99),
+        ..CreateQrisInvoice::new("pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C", "usr_acc_7f3a", 50_000)
+    };
+    let made = client.create_qris_invoice(&invoice).await.unwrap();
+    assert_eq!(made.reference, invoice.reference);
+    let again = client.qris_invoice(&invoice.reference).await.unwrap();
+    assert_eq!(again.as_ref(), Some(&made));
+    let page = client.qris_invoices(42, 100).await.unwrap();
+    assert_eq!(page.invoices[1].status, QrisInvoiceStatus::Open);
     let seen = server.join().unwrap();
     let request_lines: Vec<String> = seen.iter().map(|r| head_lines(r)[0].clone()).collect();
     assert_eq!(
@@ -183,8 +196,23 @@ async fn every_call_reaches_its_route() {
             "get /v1/keys http/1.1",
             "post /v1/keys http/1.1",
             "post /v1/pool http/1.1",
+            "post /v1/qris/invoices http/1.1",
+            "get /v1/qris/invoices/pay_01jaxf2q8n3m6p9r1t4v7x0z2c http/1.1",
+            "get /v1/qris/invoices?after_seq=42&limit=100 http/1.1",
         ]
     );
+    let body = seen[8].split("\r\n\r\n").nth(1).unwrap();
+    let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({
+            "reference": "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+            "customer_ref": "usr_acc_7f3a",
+            "amount_idr": 50000,
+            "max_unique_code": 99
+        })
+    );
+    assert!(head_lines(&seen[8]).contains(&"content-type: application/json".to_string()));
 }
 
 #[tokio::test]
@@ -203,6 +231,30 @@ async fn a_404_on_a_deposit_is_none() {
         .await
         .unwrap();
     assert_eq!(found.unwrap().seq, 42);
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn a_404_on_a_qris_invoice_is_none_and_a_503_keeps_its_code() {
+    let (base, server) = serve(vec![
+        reply(
+            404,
+            r#"{"error":{"code":"not_found","message":"no such invoice"}}"#,
+        ),
+        reply(503, include_str!("../vectors/error_qris_unavailable.json")),
+    ]);
+    let client = Client::new(&base, KEY).unwrap();
+    assert_eq!(client.qris_invoice("qri_missing").await.unwrap(), None);
+    let invoice = CreateQrisInvoice::new("pay_1", "usr_1", 1000);
+    let error = client.create_qris_invoice(&invoice).await.unwrap_err();
+    assert_eq!(
+        error,
+        ClientError::Api(ApiError::Status {
+            code: 503,
+            error_code: Some("unavailable".into())
+        })
+    );
+    assert_eq!(error.to_string(), "gateway answered 503");
     server.join().unwrap();
 }
 
