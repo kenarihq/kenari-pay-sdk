@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 (2026-10-27)
+
+- `wire`: `UniqueCodeMode` (`add`, `subtract`). `CreateQrisInvoice::unique_code_mode`, left out of
+  the body when `None` (the gateway's default, `add`): `subtract` takes the unique code off
+  `amount_idr`, so the customer pays at most the amount, and falls back to adding a code of 1 to 999
+  when every code up to `max_unique_code` is held. `QrisInvoice::unique_code_mode`, the mode the
+  invoice used, `add` when an older gateway leaves it out. `amount_due` is `base_amount +
+  unique_code` or `base_amount - unique_code` by it.
+- `vectors/`: the gateway's QRIS invoice examples with `"unique_code_mode": "add"`.
+
+Breaking for code that builds a `CreateQrisInvoice` or a `QrisInvoice` with a struct literal: the
+new field.
+
 ## 0.2.0 (2026-10-27)
 
 QRIS invoices, the gateway's rupiah rail.

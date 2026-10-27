@@ -4,6 +4,7 @@ use kenari_pay_sdk::api::{Api, ApiError, HttpRequest, Method};
 use kenari_pay_sdk::wire::{
     Address, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys,
     Networks, PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, QrisProvider, SweepsPage,
+    UniqueCodeMode,
 };
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
@@ -144,6 +145,33 @@ fn a_write_is_a_post_with_a_json_body_and_its_content_type() {
     let body = body_json(&api().create_qris_invoice(&only_max));
     assert_eq!(body["max_unique_code"], 99);
     assert!(body.get("provider").is_none());
+    assert!(body.get("unique_code_mode").is_none());
+    // The code mode goes out in lowercase when set.
+    for (mode, word) in [
+        (UniqueCodeMode::Add, "add"),
+        (UniqueCodeMode::Subtract, "subtract"),
+    ] {
+        let invoice = CreateQrisInvoice {
+            max_unique_code: Some(70),
+            unique_code_mode: Some(mode),
+            ..CreateQrisInvoice::new("pay_1", "usr_1", 10_070)
+        };
+        let body = body_json(&api().create_qris_invoice(&invoice));
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "reference": "pay_1",
+                "customer_ref": "usr_1",
+                "amount_idr": 10070,
+                "max_unique_code": 70,
+                "unique_code_mode": word
+            })
+        );
+        assert_eq!(mode.as_str(), word);
+        let read: CreateQrisInvoice = serde_json::from_value(body).unwrap();
+        assert_eq!(read, invoice);
+    }
+    assert_eq!(UniqueCodeMode::default(), UniqueCodeMode::Add);
     // And a body without them reads back with `None`.
     let read: CreateQrisInvoice =
         serde_json::from_str(r#"{"reference":"r","customer_ref":"c","amount_idr":1000}"#).unwrap();
