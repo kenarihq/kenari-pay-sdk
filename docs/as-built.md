@@ -224,8 +224,13 @@ Where the two differ the contract files win:
   An unknown provider decodes to `QrisProvider::Unknown` and changes nothing about crediting.
 - Amounts are `i64` whole rupiah and `unique_code` is `u16` (0 to 999 today), so a negative code
   fails to decode.
-- `CreateQrisInvoice::new(reference, customer_ref, amount_idr)` leaves `max_unique_code` and
-  `provider` as `None`, which are then left out of the body so the gateway's defaults apply.
+- `UniqueCodeMode { Add, Subtract }` (0.3.0, lowercase on the wire). `CreateQrisInvoice::unique_code_mode`
+  is an `Option`, left out of the body when `None` (the gateway reads `add`).
+  `QrisInvoice::unique_code_mode` is `#[serde(default)]` = `Add`, so an answer of a gateway from
+  before the mode still decodes. A mode word the SDK does not know fails to decode (no `Unknown`
+  variant), since the enum is also what a request sends.
+- `CreateQrisInvoice::new(reference, customer_ref, amount_idr)` leaves `max_unique_code`,
+  `unique_code_mode` and `provider` as `None`, which are then left out of the body so the gateway's defaults apply.
 - `WebhookEvent` gained `qris_invoice: Option<QrisInvoiceRef>` beside `deposit`, rather than one
   enum for `data`, so code that reads `event.deposit` keeps working. It now has a hand written
   `Serialize` (one `data` from whichever is set) instead of the derive.

@@ -14,7 +14,7 @@ use kenari_pay_sdk::webhook;
 use kenari_pay_sdk::wire::{
     Address, AddressKind, CustomerDeposits, Deposit, DepositStatus, DepositsPage, ErrorBody,
     EventType, Family, Keys, MatchedBy, Networks, PoolFile, QrisInvoice, QrisInvoiceStatus,
-    QrisInvoicesPage, QrisProvider, SweepsPage, WebhookEvent,
+    QrisInvoicesPage, QrisProvider, SweepsPage, UniqueCodeMode, WebhookEvent,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -292,6 +292,7 @@ fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
     let invoice: QrisInvoice = round_trip("qris_invoice_paid.json", QRIS_INVOICE);
     assert_eq!(invoice.status, QrisInvoiceStatus::Paid);
     assert_eq!(invoice.matched_by, Some(MatchedBy::Feed));
+    assert_eq!(invoice.unique_code_mode, UniqueCodeMode::Add);
     assert_eq!(
         invoice.amount_due,
         invoice.base_amount + i64::from(invoice.unique_code)
@@ -325,6 +326,7 @@ fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
         (&None, &None, &None, &None)
     );
     assert!(!open.paid_exactly());
+    assert_eq!(open.unique_code_mode, UniqueCodeMode::Add);
     assert_eq!(
         open.amount_due,
         open.base_amount + i64::from(open.unique_code)
@@ -415,6 +417,31 @@ fn a_qris_invoice_without_livemode_or_with_another_paid_amount_is_not_creditable
     let invoice: QrisInvoice = serde_json::from_value(value).unwrap();
     assert_eq!(invoice.unique_code, 0);
     assert!(invoice.paid_exactly());
+    // A gateway before the code mode sends no `unique_code_mode`: the invoice reads as `Add`.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
+    value.as_object_mut().unwrap().remove("unique_code_mode");
+    let older: QrisInvoice = serde_json::from_value(value).unwrap();
+    assert_eq!(older.unique_code_mode, UniqueCodeMode::Add);
+    assert_eq!(
+        older,
+        serde_json::from_str::<QrisInvoice>(QRIS_INVOICE).unwrap()
+    );
+    // A code taken off the base: the amount due is below the base amount.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
+    value["unique_code_mode"] = "subtract".into();
+    value["amount_due"] = 49_877.into();
+    value["paid_amount"] = 49_877.into();
+    let invoice: QrisInvoice = serde_json::from_value(value).unwrap();
+    assert_eq!(invoice.unique_code_mode, UniqueCodeMode::Subtract);
+    assert_eq!(
+        invoice.amount_due,
+        invoice.base_amount - i64::from(invoice.unique_code)
+    );
+    assert!(invoice.paid_exactly());
+    // A mode this SDK does not know is not read as either.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
+    value["unique_code_mode"] = "minus".into();
+    assert!(serde_json::from_value::<QrisInvoice>(value).is_err());
     // A negative code is not a code.
     let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
     value["unique_code"] = (-1).into();

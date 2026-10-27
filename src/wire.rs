@@ -494,6 +494,30 @@ pub struct SweepsPage {
     pub has_more: bool,
 }
 
+/// Whether a QRIS invoice's unique code is added to its base amount or taken off it. The invoice's
+/// `amount_due` is `base_amount + unique_code` (`Add`) or `base_amount - unique_code` (`Subtract`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UniqueCodeMode {
+    /// The code rides on top of the base amount: the customer pays up to Rp999 more. The gateway's
+    /// default.
+    #[default]
+    Add,
+    /// The code is taken off the base amount, so the customer never pays more than the base amount.
+    /// Take the code from your own fee, and ask a `max_unique_code` no larger than that fee.
+    Subtract,
+}
+
+impl UniqueCodeMode {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UniqueCodeMode::Add => "add",
+            UniqueCodeMode::Subtract => "subtract",
+        }
+    }
+}
+
 /// The body of `POST /v1/qris/invoices`: ask for a QRIS invoice.
 ///
 /// The same `reference` again returns the invoice made the first time, whatever the rest of the
@@ -505,13 +529,19 @@ pub struct CreateQrisInvoice {
     /// The merchant's id for the customer.
     pub customer_ref: String,
     /// The base amount in whole rupiah, 1000 to 9999000. The customer pays this plus a unique
-    /// code of Rp0 to Rp999, the invoice's `amount_due`.
+    /// code of Rp0 to Rp999 (or minus it, see `unique_code_mode`), the invoice's `amount_due`.
     pub amount_idr: i64,
     /// The largest unique code wanted, 0 to 999. The gateway picks the smallest free code up to
     /// it, and above it up to 999 only when every code up to it is taken. `None` leaves it out of
     /// the body, which the gateway reads as 999.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_unique_code: Option<u16>,
+    /// Add the code to `amount_idr` or take it off. With `Subtract` the code is the smallest free
+    /// one up to `max_unique_code` taken off the amount, and when every one is held the gateway
+    /// falls back to adding a code of 1 to 999 (the invoice then says `Add`). `None` leaves it out
+    /// of the body, which the gateway reads as `Add`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unique_code_mode: Option<UniqueCodeMode>,
     /// The kind of QRIS account to collect with. `None` leaves it out of the body, and the gateway
     /// picks the merchant's usable account of the lowest priority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -519,14 +549,15 @@ pub struct CreateQrisInvoice {
 }
 
 impl CreateQrisInvoice {
-    /// The request for `amount_idr` with no `max_unique_code` and no `provider`, so the gateway's
-    /// defaults apply.
+    /// The request for `amount_idr` with no `max_unique_code`, no `unique_code_mode` and no
+    /// `provider`, so the gateway's defaults apply.
     pub fn new(reference: &str, customer_ref: &str, amount_idr: i64) -> CreateQrisInvoice {
         CreateQrisInvoice {
             reference: reference.to_string(),
             customer_ref: customer_ref.to_string(),
             amount_idr,
             max_unique_code: None,
+            unique_code_mode: None,
             provider: None,
         }
     }
@@ -550,10 +581,14 @@ pub struct QrisInvoice {
     pub status: QrisInvoiceStatus,
     /// The base amount the merchant asked for, in rupiah.
     pub base_amount: i64,
-    /// The unique code added to the base amount, Rp0 to Rp999.
+    /// The unique code added to the base amount or taken off it (`unique_code_mode`), Rp0 to Rp999.
     pub unique_code: u16,
-    /// What the customer pays, `base_amount + unique_code`, in rupiah. Show it with the code as
-    /// its own line.
+    /// The mode the invoice used: a `Subtract` request that fell back to adding says `Add`. An
+    /// answer without it (a gateway before 0.3.0 of this SDK) reads as `Add`.
+    #[serde(default)]
+    pub unique_code_mode: UniqueCodeMode,
+    /// What the customer pays, `base_amount + unique_code` (`Add`) or `base_amount - unique_code`
+    /// (`Subtract`), in rupiah. Show it with the code as its own line.
     pub amount_due: i64,
     /// The dynamic QRIS payload to render as a QR code. It carries `amount_due`.
     pub qris: String,

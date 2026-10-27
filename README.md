@@ -14,7 +14,8 @@ has to get right is small and easy to get wrong, and this crate does exactly tha
 
 It holds no secret and opens no connection. It is the wire types, the address check, the webhook
 check and the building of requests, tested against the gateway's own examples. The full API is in
-the gateway's `docs/api.md`, served at `https://pay.kenari.id/llms-full.txt`.
+the gateway's `docs/api.md`, served at `https://pay.kenari.id/llms-full.txt` to your API key (the
+sandbox key reads it on `https://pay-sandbox.kenari.id`).
 
 ## Install
 
@@ -207,7 +208,10 @@ the gateway and not that the body is true, so never act on the body.
 
 A merchant the operator enabled QRIS for can also take rupiah. The gateway holds a QRIS merchant
 account, adds a unique code of Rp0 to Rp999 to your amount so each open invoice of an amount is
-told apart, and marks the invoice paid when exactly that amount lands.
+told apart, and marks the invoice paid when exactly that amount lands. With `unique_code_mode:
+Some(UniqueCodeMode::Subtract)` the code is taken off your amount instead, so the customer never
+pays more than you showed: take the code from your own fee, and ask a `max_unique_code` no larger
+than that fee. `QrisInvoice::unique_code_mode` says which one the invoice used.
 
 ```rust
 use kenari_pay_sdk::api::{Api, ApiError, HttpRequest};
