@@ -2,11 +2,12 @@
 
 use kenari_pay_sdk::api::{Api, Method};
 use kenari_pay_sdk::feed::{Cursor, Feed};
-use kenari_pay_sdk::wire::{DepositsPage, QrisInvoicesPage, SweepsPage};
+use kenari_pay_sdk::wire::{AlipayInvoicesPage, DepositsPage, QrisInvoicesPage, SweepsPage};
 
 const DEPOSITS_PAGE: &[u8] = include_bytes!("../vectors/deposits_page.json");
 const SWEEPS_PAGE: &[u8] = include_bytes!("../vectors/sweeps_page.json");
 const QRIS_PAGE: &[u8] = include_bytes!("../vectors/qris_invoices_page.json");
+const ALIPAY_PAGE: &[u8] = include_bytes!("../vectors/alipay_invoices_page.json");
 
 fn api() -> Api {
     Api::new("https://pay-sandbox.kenari.id", "kp_test_example").unwrap()
@@ -42,6 +43,41 @@ fn each_feed_renders_its_own_request() {
         "https://pay-sandbox.kenari.id/v1/qris/invoices?after_seq=3&limit=100"
     );
     assert_eq!(request, api().qris_invoices(3, 100));
+
+    let invoices = Cursor::alipay_invoices(5);
+    assert_eq!(invoices.feed(), Feed::AlipayInvoices);
+    let request = invoices.next(&api(), 100);
+    assert_eq!(request.method, Method::Get);
+    assert_eq!(
+        request.url,
+        "https://pay-sandbox.kenari.id/v1/alipay/invoices?after_seq=5&limit=100"
+    );
+    assert_eq!(request, api().alipay_invoices(5, 100));
+}
+
+#[test]
+fn the_alipay_invoice_feed_advances_over_a_page_and_stops_at_a_failure() {
+    let page: AlipayInvoicesPage = Api::decode(200, ALIPAY_PAGE).unwrap();
+    let mut cursor = Cursor::alipay_invoices(0);
+    for invoice in &page.invoices {
+        cursor.advance_to(invoice.seq);
+    }
+    assert_eq!(cursor.after_seq(), page.next_seq);
+
+    // The second invoice fails, so the cursor stays on the first and the next page reads it again.
+    let mut cursor = Cursor::alipay_invoices(0);
+    for (n, invoice) in page.invoices.iter().enumerate() {
+        if n == 1 {
+            break;
+        }
+        cursor.advance_to(invoice.seq);
+    }
+    assert_eq!(cursor.after_seq(), 42);
+    assert_eq!(
+        cursor.next(&api(), 100).url,
+        "https://pay-sandbox.kenari.id/v1/alipay/invoices?after_seq=42&limit=100"
+    );
+    assert_eq!(Cursor::alipay_invoices(-1).after_seq(), 0);
 }
 
 #[test]

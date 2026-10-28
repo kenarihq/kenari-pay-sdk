@@ -2,9 +2,10 @@
 
 use kenari_pay_sdk::api::{Api, ApiError, HttpRequest, Method};
 use kenari_pay_sdk::wire::{
-    Address, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys,
-    Networks, PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, QrisProvider, SweepsPage,
-    UniqueCodeMode,
+    Address, AlipayInvoice, AlipayInvoiceStatus, AlipayInvoicesPage, AlipayPacks,
+    CreateAlipayInvoice, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key,
+    Keys, Networks, PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, QrisProvider,
+    SweepsPage, UniqueCodeMode,
 };
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
@@ -61,6 +62,23 @@ fn a_read_is_a_get_with_the_key_and_no_body() {
         (
             api().qris_invoices(42, 100),
             "/v1/qris/invoices?after_seq=42&limit=100",
+        ),
+        (api().alipay_packs(), "/v1/alipay/packs"),
+        (
+            api()
+                .alipay_invoice("ali_01JAXF3K9V0QH2M7Z5R8T4W6YC")
+                .unwrap(),
+            "/v1/alipay/invoices/ali_01JAXF3K9V0QH2M7Z5R8T4W6YC",
+        ),
+        (
+            api()
+                .alipay_invoice("pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C")
+                .unwrap(),
+            "/v1/alipay/invoices/pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+        ),
+        (
+            api().alipay_invoices(42, 100),
+            "/v1/alipay/invoices?after_seq=42&limit=100",
         ),
     ];
     for (request, path) in calls {
@@ -179,6 +197,50 @@ fn a_write_is_a_post_with_a_json_body_and_its_content_type() {
 }
 
 #[test]
+fn an_alipay_invoice_is_a_post_of_exactly_the_documented_body() {
+    let invoice =
+        CreateAlipayInvoice::new("pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C", "usr_acc_7f3a", "sku_100k");
+    let request = api().create_alipay_invoice(&invoice);
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(request.url, format!("{BASE}/v1/alipay/invoices"));
+    assert_eq!(request.headers, vec![bearer(), json_header()]);
+    assert_eq!(
+        body_json(&request),
+        serde_json::json!({
+            "reference": "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+            "customer_ref": "usr_acc_7f3a",
+            "sku_id": "sku_100k"
+        })
+    );
+    let read: CreateAlipayInvoice = serde_json::from_value(body_json(&request)).unwrap();
+    assert_eq!(read, invoice);
+    // A customer ref with quotes, a newline and non ASCII is escaped in the JSON body.
+    let nasty = "a\"b\\c\nd\u{e9}";
+    let request = api().create_alipay_invoice(&CreateAlipayInvoice::new("r", nasty, "sku_1"));
+    assert_eq!(body_json(&request)["customer_ref"], nasty);
+}
+
+#[test]
+fn an_alipay_cancel_is_a_post_with_no_body_and_so_no_content_type() {
+    for (value, segment) in [
+        (
+            "ali_01JAXF3K9V0QH2M7Z5R8T4W6YC",
+            "ali_01JAXF3K9V0QH2M7Z5R8T4W6YC",
+        ),
+        ("pay/1?x", "pay%2F1%3Fx"),
+    ] {
+        let request = api().cancel_alipay_invoice(value).unwrap();
+        assert_eq!(request.method, Method::Post);
+        assert_eq!(
+            request.url,
+            format!("{BASE}/v1/alipay/invoices/{segment}/cancel")
+        );
+        assert_eq!(request.headers, vec![bearer()]);
+        assert_eq!(request.body, None);
+    }
+}
+
+#[test]
 fn a_reissue_is_a_post_with_no_body_and_so_no_content_type() {
     let request = api().reissue("adr_01JAXEZ7Q4K2M8N5P1R3T6V9WB").unwrap();
     assert_eq!(request.method, Method::Post);
@@ -242,6 +304,16 @@ fn a_dot_segment_is_refused_by_every_call_that_takes_a_path_value() {
             Err(ApiError::Argument),
             "qris_invoice {value:?}"
         );
+        assert_eq!(
+            api().alipay_invoice(value),
+            Err(ApiError::Argument),
+            "alipay_invoice {value:?}"
+        );
+        assert_eq!(
+            api().cancel_alipay_invoice(value),
+            Err(ApiError::Argument),
+            "cancel_alipay_invoice {value:?}"
+        );
     }
     // The refusal is fixed text and holds no value.
     assert_eq!(
@@ -270,6 +342,18 @@ fn a_value_that_looks_encoded_stays_one_encoded_segment() {
     );
     let request = api().qris_invoice("%2e%2e").unwrap();
     assert_eq!(request.url, format!("{BASE}/v1/qris/invoices/%252e%252e"));
+    let request = api().alipay_invoice("../invoices?after_seq=0").unwrap();
+    assert_eq!(
+        request.url,
+        format!("{BASE}/v1/alipay/invoices/..%2Finvoices%3Fafter_seq%3D0")
+    );
+    let request = api().alipay_invoice("%2e%2e").unwrap();
+    assert_eq!(request.url, format!("{BASE}/v1/alipay/invoices/%252e%252e"));
+    let request = api().cancel_alipay_invoice("%2e%2e").unwrap();
+    assert_eq!(
+        request.url,
+        format!("{BASE}/v1/alipay/invoices/%252e%252e/cancel")
+    );
     // A value with a slash is one segment, never two.
     let request = api().customer_deposits("a/b", 10).unwrap();
     assert_eq!(
@@ -462,6 +546,26 @@ fn every_example_decodes_through_the_call_that_returns_it() {
         (page.invoices.len(), page.next_seq, page.has_more),
         (2, 43, false)
     );
+    let packs: AlipayPacks =
+        Api::decode(200, include_bytes!("../vectors/alipay_packs.json")).unwrap();
+    assert!(packs.available);
+    assert_eq!(packs.packs.len(), 2);
+    // A new Alipay invoice is a 201, the one already made for the reference and a cancel a 200.
+    for status in [200, 201] {
+        let invoice: AlipayInvoice = Api::decode(
+            status,
+            include_bytes!("../vectors/alipay_invoice_paid.json"),
+        )
+        .unwrap();
+        assert_eq!(invoice.paid_points, Some(100_000));
+    }
+    let page: AlipayInvoicesPage =
+        Api::decode(200, include_bytes!("../vectors/alipay_invoices_page.json")).unwrap();
+    assert_eq!(
+        (page.invoices.len(), page.next_seq, page.has_more),
+        (2, 43, false)
+    );
+    assert_eq!(page.invoices[1].status, AlipayInvoiceStatus::Open);
 }
 
 #[test]
@@ -578,6 +682,14 @@ fn a_404_on_a_deposit_is_none_and_the_other_statuses_are_not() {
     let found: Option<QrisInvoice> =
         Api::decode_optional(200, include_bytes!("../vectors/qris_invoice_paid.json")).unwrap();
     assert_eq!(found.unwrap().id, "qri_01JAXF3K9V0QH2M7Z5R8T4W6YC");
+    // And for an Alipay invoice.
+    assert_eq!(
+        Api::decode_optional::<AlipayInvoice>(404, missing),
+        Ok(None)
+    );
+    let found: Option<AlipayInvoice> =
+        Api::decode_optional(200, include_bytes!("../vectors/alipay_invoice_paid.json")).unwrap();
+    assert_eq!(found.unwrap().id, "ali_01JAXF3K9V0QH2M7Z5R8T4W6YC");
 }
 
 #[test]
@@ -598,6 +710,38 @@ fn every_qris_refusal_the_docs_name_keeps_its_code() {
             "{code}"
         );
     }
+}
+
+#[test]
+fn every_alipay_refusal_the_docs_name_keeps_its_code() {
+    // A create: an open invoice for the customer, a pack not on sale, Alipay not available, a
+    // body the gateway refuses. A cancel of a paid invoice is a conflict too.
+    for (status, code) in [
+        (409, "conflict"),
+        (404, "not_found"),
+        (503, "unavailable"),
+        (400, "invalid_request"),
+    ] {
+        let body = serde_json::json!({"error": {"code": code, "message": "m"}}).to_string();
+        assert_eq!(
+            Api::decode::<AlipayInvoice>(status, body.as_bytes()),
+            Err(ApiError::Status {
+                code: status,
+                error_code: Some(code.into())
+            }),
+            "{code}"
+        );
+    }
+    assert_eq!(
+        Api::decode::<AlipayInvoice>(
+            503,
+            include_bytes!("../vectors/error_alipay_unavailable.json")
+        ),
+        Err(ApiError::Status {
+            code: 503,
+            error_code: Some("unavailable".into())
+        })
+    );
 }
 
 #[test]

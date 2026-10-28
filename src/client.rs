@@ -27,8 +27,9 @@ use std::time::Duration;
 
 use crate::api::{Api, ApiError, HttpRequest, Method};
 use crate::wire::{
-    Address, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys,
-    Networks, PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, SweepsPage,
+    Address, AlipayInvoice, AlipayInvoicesPage, AlipayPacks, CreateAlipayInvoice,
+    CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys, Networks,
+    PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, SweepsPage,
 };
 
 /// How long the default client waits to connect.
@@ -238,6 +239,51 @@ impl Client {
         limit: u32,
     ) -> Result<QrisInvoicesPage, ClientError> {
         self.call(self.api.qris_invoices(after_seq, limit)).await
+    }
+
+    /// `GET /v1/alipay/packs`.
+    pub async fn alipay_packs(&self) -> Result<AlipayPacks, ClientError> {
+        self.call(self.api.alipay_packs()).await
+    }
+
+    /// `POST /v1/alipay/invoices`. The same `reference` again returns the same invoice, so a
+    /// retry after a timeout is safe. See [`Api::create_alipay_invoice`] for the refusals.
+    pub async fn create_alipay_invoice(
+        &self,
+        invoice: &CreateAlipayInvoice,
+    ) -> Result<AlipayInvoice, ClientError> {
+        self.call(self.api.create_alipay_invoice(invoice)).await
+    }
+
+    /// `GET /v1/alipay/invoices/{id_or_reference}`, with a 404 as `Ok(None)`. An empty, `.` or
+    /// `..` value is refused before anything is sent, as [`ApiError::Argument`] in
+    /// [`ClientError::Api`].
+    pub async fn alipay_invoice(
+        &self,
+        id_or_reference: &str,
+    ) -> Result<Option<AlipayInvoice>, ClientError> {
+        let (status, body) = self.send(self.api.alipay_invoice(id_or_reference)?).await?;
+        Ok(Api::decode_optional(status, &body)?)
+    }
+
+    /// `GET /v1/alipay/invoices?after_seq=&limit=`. See [`crate::feed`] for the cursor rule.
+    pub async fn alipay_invoices(
+        &self,
+        after_seq: i64,
+        limit: u32,
+    ) -> Result<AlipayInvoicesPage, ClientError> {
+        self.call(self.api.alipay_invoices(after_seq, limit)).await
+    }
+
+    /// `POST /v1/alipay/invoices/{id_or_reference}/cancel`. A 404 is an error here, not `None`.
+    /// An empty, `.` or `..` value is refused before anything is sent, as [`ApiError::Argument`]
+    /// in [`ClientError::Api`]. See [`Api::cancel_alipay_invoice`].
+    pub async fn cancel_alipay_invoice(
+        &self,
+        id_or_reference: &str,
+    ) -> Result<AlipayInvoice, ClientError> {
+        self.call(self.api.cancel_alipay_invoice(id_or_reference)?)
+            .await
     }
 
     /// `GET /v1/keys`, for a merchant on pool addresses.

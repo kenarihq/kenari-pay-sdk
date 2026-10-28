@@ -1,0 +1,19 @@
+{
+  "available": true,
+  "packs": [
+    {
+      "sku_id": "sku_50k",
+      "name": "Saldo Rp50.000",
+      "price": "22.50",
+      "currency": "CNY",
+      "points": 50000
+    },
+    {
+      "sku_id": "sku_100k",
+      "name": "Saldo Rp100.000",
+      "price": "45.00",
+      "currency": "CNY",
+      "points": 100000
+    }
+  ]
+}

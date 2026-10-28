@@ -1,9 +1,9 @@
 [package]
 name = "kenari-pay-sdk"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.97"
-description = "Merchant SDK for the kenari-pay deposit gateway: wire types, address check, webhook check, QRIS invoices and request building."
+description = "Merchant SDK for the kenari-pay deposit gateway: wire types, address check, webhook check, QRIS and Alipay invoices and request building."
 readme = "README.md"
 repository = "https://github.com/kenarihq/kenari-pay-sdk"
 license = "MIT OR Apache-2.0"

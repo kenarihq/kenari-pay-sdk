@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.0 (2026-10-28)
+
+Alipay invoices: the merchant sells a points pack set in Alipay, the gateway drains the customer's
+points balance at Alipay into the customer's invoice, and the merchant credits each drain.
+
+- `wire`: `AlipayPack` (`sku_id`, `name`, `price` as Alipay's decimal text, `currency`, `points`),
+  `AlipayPacks` (`available`, `packs`), `AlipayInvoice`, `AlipayInvoicesPage`, `AlipayInvoiceStatus`
+  (`open`, `expired`, `cancelled`, `paid`, with `Unknown` for a word the SDK does not know) and
+  `AlipayDrain` (`id`, `points`, `drained_at`). `AlipayInvoice::drains` is every drain into the
+  invoice, oldest first, empty while open or when an answer leaves it out, and
+  `AlipayInvoice::drained_points` is their sum, the gateway's `paid_points`. Credit each drain once,
+  keyed on its `id`. `CreateAlipayInvoice` (`reference`, `customer_ref`, `sku_id`) with `new`.
+- `wire`: `EventType::AlipayInvoicePaid` (`alipay_invoice.paid`, the first drain),
+  `AlipayInvoiceDrained` (`alipay_invoice.drained`, a later drain) and `AlipayInvoiceExpired`
+  (`alipay_invoice.expired`, expired or cancelled with nothing drained), and
+  `EventType::is_alipay_invoice`. Their `data` is an `AlipayInvoiceRef` (`invoice_id`, `reference`,
+  `seq`) in the new `WebhookEvent::alipay_invoice`. An `alipay_invoice.*` event whose `data` is not
+  that is a body error. An unknown type still verifies with `deposit`, `qris_invoice` and
+  `alipay_invoice` all `None`.
+- `api` and `client`: `alipay_packs`, `create_alipay_invoice`, `alipay_invoice` (a 404 is `None`),
+  `alipay_invoices` and `cancel_alipay_invoice`, with the same path segment rule as the other calls.
+- `feed`: `Cursor::alipay_invoices` and `Feed::AlipayInvoices`.
+- `vectors/`: the gateway's `alipay_packs.json`, `alipay_invoice_paid.json`,
+  `alipay_invoices_page.json`, `webhook_alipay_invoice_paid.json` and `error_alipay_unavailable.json`.
+
+Breaking for code that builds a `WebhookEvent` with a struct literal, or matches `EventType` or
+`Feed` exhaustively: the new field and variants.
+
 ## 0.4.0 (2026-10-28)
 
 - `wire`: `QrisInvoice::repeat_payments`, the settled payments of exactly `amount_due` that landed in

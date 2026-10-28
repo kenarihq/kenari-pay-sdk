@@ -33,7 +33,7 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::wire::{CreateQrisInvoice, ErrorBody, Family, PoolFile};
+use crate::wire::{CreateAlipayInvoice, CreateQrisInvoice, ErrorBody, Family, PoolFile};
 
 /// The HTTP method of a request. The API uses these two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -419,6 +419,71 @@ impl Api {
         ))
     }
 
+    /// `GET /v1/alipay/packs`: the Alipay points packs on sale now. Decode with
+    /// [`AlipayPacks`](crate::wire::AlipayPacks). `available` is false, with no packs, when Alipay
+    /// is not open to the merchant right now.
+    pub fn alipay_packs(&self) -> HttpRequest {
+        self.get("/v1/alipay/packs")
+    }
+
+    /// `POST /v1/alipay/invoices`: an Alipay invoice for one pack. Decode with
+    /// [`AlipayInvoice`](crate::wire::AlipayInvoice): `201` for a new invoice, `200` for the one
+    /// already made with the same `reference`.
+    ///
+    /// The refusals to expect: `409 conflict` while the customer has an `open` Alipay invoice
+    /// (cancel it with [`Api::cancel_alipay_invoice`] or let it expire), `404 not_found` for a
+    /// `sku_id` that is not on sale (this is a refusal, not an answer for
+    /// [`Api::decode_optional`]), and `503 unavailable` when Alipay is not available for the
+    /// merchant or does not answer. Show the customer another way to pay, never the gateway's
+    /// message.
+    pub fn create_alipay_invoice(&self, invoice: &CreateAlipayInvoice) -> HttpRequest {
+        self.post("/v1/alipay/invoices", Some(json_body(invoice)))
+    }
+
+    /// `GET /v1/alipay/invoices/{id_or_reference}`: one Alipay invoice by `ali_...` id or by the
+    /// merchant's own `reference`, the re-fetch to do before acting on any webhook. Decode with
+    /// [`Api::decode_optional`] for an [`AlipayInvoice`](crate::wire::AlipayInvoice), because a
+    /// 404 means there is no such invoice.
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::Argument`] when `id_or_reference` is empty, `.` or `..`.
+    pub fn alipay_invoice(&self, id_or_reference: &str) -> Result<HttpRequest, ApiError> {
+        Ok(self.get(&format!(
+            "/v1/alipay/invoices/{}",
+            encode_path_segment(id_or_reference)?
+        )))
+    }
+
+    /// `GET /v1/alipay/invoices?after_seq=&limit=`: the Alipay invoice change feed, ascending by
+    /// `seq`. `limit` is 1 to 100. Decode with
+    /// [`AlipayInvoicesPage`](crate::wire::AlipayInvoicesPage). The cursor rule of [`crate::feed`]
+    /// applies.
+    pub fn alipay_invoices(&self, after_seq: i64, limit: u32) -> HttpRequest {
+        self.get(&format!(
+            "/v1/alipay/invoices?after_seq={after_seq}&limit={limit}"
+        ))
+    }
+
+    /// `POST /v1/alipay/invoices/{id_or_reference}/cancel`: turn an `open` invoice `cancelled`, so
+    /// the customer can buy another pack. Decode with
+    /// [`AlipayInvoice`](crate::wire::AlipayInvoice). A `cancelled` or `expired` invoice is
+    /// answered as it is, a `paid` one is `409 conflict`.
+    ///
+    /// The Alipay link is not withdrawn: a payment made through it later is still drained into
+    /// this invoice until `match_until`, or into the customer's next invoice, so keep watching it.
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::Argument`] when `id_or_reference` is empty, `.` or `..`.
+    pub fn cancel_alipay_invoice(&self, id_or_reference: &str) -> Result<HttpRequest, ApiError> {
+        let path = format!(
+            "/v1/alipay/invoices/{}/cancel",
+            encode_path_segment(id_or_reference)?
+        );
+        Ok(self.post(&path, None))
+    }
+
     /// Decode the answer to a request: the wire type for a 2xx status, an [`ApiError`] otherwise.
     ///
     /// A non 2xx body is read only for its `error.code`, and the code is kept only when it is a
@@ -438,8 +503,8 @@ impl Api {
         serde_json::from_slice(body).map_err(|e| ApiError::Decode(e.to_string()))
     }
 
-    /// Like [`Api::decode`], with a 404 as `Ok(None)`: for [`Api::deposit`] and
-    /// [`Api::qris_invoice`], where the gateway saying there is no such object is an answer and
+    /// Like [`Api::decode`], with a 404 as `Ok(None)`: for [`Api::deposit`], [`Api::qris_invoice`]
+    /// and [`Api::alipay_invoice`], where the gateway saying there is no such object is an answer and
     /// not a failure.
     ///
     /// Any 404 counts, including one from a proxy in front of the gateway. A merchant that is not
@@ -535,6 +600,8 @@ mod tests {
                 api.deposit(value),
                 api.reissue(value),
                 api.qris_invoice(value),
+                api.alipay_invoice(value),
+                api.cancel_alipay_invoice(value),
             ];
             for request in rendered {
                 let Ok(request) = request else {

@@ -49,8 +49,8 @@ pub enum WebhookError {
     /// The signature does not match, or the secret is empty.
     Mismatch,
     /// The signature is right and the body is not a webhook event: the envelope is incomplete, a
-    /// `deposit.*` event has no deposit ids in its `data`, or a `qris_invoice.*` event has no
-    /// invoice ids in it.
+    /// `deposit.*` event has no deposit ids in its `data`, or a `qris_invoice.*` or
+    /// `alipay_invoice.*` event has no invoice ids in it.
     Body,
 }
 
@@ -75,10 +75,10 @@ impl std::error::Error for WebhookError {}
 /// when it holds, so nothing in an unsigned body is parsed.
 ///
 /// An event type this SDK does not know is [`EventType::Unknown`](crate::wire::EventType::Unknown)
-/// with no `deposit` and no `qris_invoice`, and still a success whatever its `data` holds, so
-/// answer 2xx and ignore it. A `deposit.*` event whose `data` is not `deposit_id`, `key` and
-/// `seq`, or a `qris_invoice.*` event whose `data` is not `invoice_id`, `reference` and `seq`, is
-/// [`WebhookError::Body`].
+/// with no `deposit`, no `qris_invoice` and no `alipay_invoice`, and still a success whatever its
+/// `data` holds, so answer 2xx and ignore it. A `deposit.*` event whose `data` is not
+/// `deposit_id`, `key` and `seq`, or a `qris_invoice.*` or `alipay_invoice.*` event whose `data` is
+/// not `invoice_id`, `reference` and `seq`, is [`WebhookError::Body`].
 pub fn verify(
     signature_header: &str,
     raw_body: &[u8],
