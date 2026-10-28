@@ -613,9 +613,10 @@ pub struct QrisInvoice {
     pub payer_issuer: Option<String>,
     /// How the payment was matched, null until paid.
     pub matched_by: Option<MatchedBy>,
-    /// The settled payments of exactly `amount_due` that landed in the invoice's window after it
-    /// was already paid, oldest first: the payer paid the same QR again. The money is the
-    /// merchant's to credit to the same customer or to refund, once per
+    /// The settled payments of exactly `amount_due` that landed in the invoice's window besides
+    /// the payment that paid it, oldest first: the payer paid the same QR again. An entry's
+    /// `paid_at` can be earlier than the invoice's `paid_at` when the feed showed it later. The
+    /// money is the merchant's to credit to the same customer or to refund, once per
     /// [`QrisRepeatPayment::feed_tx_id`]. Empty when an older gateway leaves it out.
     #[serde(default)]
     pub repeat_payments: Vec<QrisRepeatPayment>,
@@ -625,7 +626,7 @@ pub struct QrisInvoice {
     pub livemode: bool,
 }
 
-/// A payment of a QRIS invoice that was already paid, an entry of
+/// A second payment of a QRIS invoice, besides the one that paid it, an entry of
 /// [`QrisInvoice::repeat_payments`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QrisRepeatPayment {
