@@ -18,6 +18,15 @@
       "paid_amount": 50123,
       "payer_issuer": "DANA",
       "matched_by": "feed",
+      "repeat_payments": [
+        {
+          "feed_tx_id": "01a1a2b3-c4d5-7000-8e9f-0a1b2c3d4e5f",
+          "amount": 50123,
+          "issuer": "DANA",
+          "paid_at": 1760700443,
+          "reversed_at": null
+        }
+      ],
       "seq": 42,
       "livemode": true
     },
@@ -39,6 +48,7 @@
       "paid_amount": null,
       "payer_issuer": null,
       "matched_by": null,
+      "repeat_payments": [],
       "seq": 43,
       "livemode": true
     }

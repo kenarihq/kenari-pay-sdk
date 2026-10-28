@@ -303,6 +303,15 @@ fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
     assert!(invoice.livemode);
     assert!(invoice.created_at < invoice.expires_at && invoice.expires_at < invoice.match_until);
     assert_eq!(invoice.payer_issuer.as_deref(), Some("DANA"));
+    // The example was paid twice: one repeat of exactly amount_due, after the first payment and
+    // inside the window, not reversed.
+    assert_eq!(invoice.repeat_payments.len(), 1);
+    let repeat = &invoice.repeat_payments[0];
+    assert_eq!(repeat.amount, invoice.amount_due);
+    assert_eq!(repeat.reversed_at, None);
+    assert_eq!(repeat.issuer.as_deref(), Some("DANA"));
+    assert!(invoice.paid_at.unwrap() <= repeat.paid_at && repeat.paid_at <= invoice.match_until);
+    assert!(repeat.creditable_for(&invoice));
     assert_dynamic_qris_of(&invoice);
 
     let page: QrisInvoicesPage = round_trip("qris_invoices_page.json", QRIS_PAGE);
@@ -326,6 +335,7 @@ fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
         (&None, &None, &None, &None)
     );
     assert!(!open.paid_exactly());
+    assert!(open.repeat_payments.is_empty());
     assert_eq!(open.unique_code_mode, UniqueCodeMode::Add);
     assert_eq!(
         open.amount_due,

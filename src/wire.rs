@@ -119,6 +119,10 @@ pub enum EventType {
     /// `qris_invoice.expired`
     #[serde(rename = "qris_invoice.expired")]
     QrisInvoiceExpired,
+    /// `qris_invoice.repeat_paid`: the invoice's [`QrisInvoice::repeat_payments`] changed (a new
+    /// repeat payment, or one read reversed later).
+    #[serde(rename = "qris_invoice.repeat_paid")]
+    QrisInvoiceRepeatPaid,
     /// An event type this SDK does not know. Answer 2xx and ignore it.
     #[serde(other, rename = "unknown")]
     Unknown,
@@ -134,6 +138,7 @@ impl EventType {
             EventType::DepositReverted => "deposit.reverted",
             EventType::QrisInvoicePaid => "qris_invoice.paid",
             EventType::QrisInvoiceExpired => "qris_invoice.expired",
+            EventType::QrisInvoiceRepeatPaid => "qris_invoice.repeat_paid",
             EventType::Unknown => "unknown",
         }
     }
@@ -153,7 +158,9 @@ impl EventType {
     pub fn is_qris_invoice(self) -> bool {
         matches!(
             self,
-            EventType::QrisInvoicePaid | EventType::QrisInvoiceExpired
+            EventType::QrisInvoicePaid
+                | EventType::QrisInvoiceExpired
+                | EventType::QrisInvoiceRepeatPaid
         )
     }
 }
@@ -606,10 +613,42 @@ pub struct QrisInvoice {
     pub payer_issuer: Option<String>,
     /// How the payment was matched, null until paid.
     pub matched_by: Option<MatchedBy>,
-    /// The feed position, reassigned on every state change.
+    /// The settled payments of exactly `amount_due` that landed in the invoice's window besides
+    /// the payment that paid it, oldest first: the payer paid the same QR again. An entry's
+    /// `paid_at` can be earlier than the invoice's `paid_at` when the feed showed it later. The
+    /// money is the merchant's to credit to the same customer or to refund, once per
+    /// [`QrisRepeatPayment::feed_tx_id`]. Empty when an older gateway leaves it out.
+    #[serde(default)]
+    pub repeat_payments: Vec<QrisRepeatPayment>,
+    /// The feed position, reassigned on every state change and every repeat payment.
     pub seq: i64,
     /// `true` on the live gateway, `false` on the sandbox.
     pub livemode: bool,
+}
+
+/// A second payment of a QRIS invoice, besides the one that paid it, an entry of
+/// [`QrisInvoice::repeat_payments`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisRepeatPayment {
+    /// The feed's transaction id, unique per payment. Key a credit on it.
+    pub feed_tx_id: String,
+    /// What was paid, in rupiah, equal to the invoice's `amount_due`.
+    pub amount: i64,
+    /// The payer's QRIS issuer when the feed names it.
+    pub issuer: Option<String>,
+    /// When the payer paid (the feed's time), in unix seconds.
+    pub paid_at: i64,
+    /// When a later read showed this payment refunded, reversed, cancelled or denied, null until
+    /// then. Do not credit a reversed repeat, and hold one already credited for a person.
+    pub reversed_at: Option<i64>,
+}
+
+impl QrisRepeatPayment {
+    /// `true` when the payment is exactly `invoice`'s `amount_due` and was not reversed. Only such a
+    /// repeat is safe to credit without a person.
+    pub fn creditable_for(&self, invoice: &QrisInvoice) -> bool {
+        self.reversed_at.is_none() && self.amount == invoice.amount_due && self.amount > 0
+    }
 }
 
 impl QrisInvoice {
@@ -888,6 +927,59 @@ mod tests {
         // A value that is not text is still an error, not an `Unknown`.
         assert!(serde_json::from_str::<DepositStatus>("7").is_err());
         assert!(serde_json::from_str::<DepositStatus>("null").is_err());
+    }
+
+    #[test]
+    fn a_repeat_paid_event_is_a_qris_invoice_event() {
+        let event: EventType = serde_json::from_str("\"qris_invoice.repeat_paid\"").unwrap();
+        assert_eq!(event, EventType::QrisInvoiceRepeatPaid);
+        assert_eq!(event.as_str(), "qris_invoice.repeat_paid");
+        assert!(event.is_qris_invoice());
+        assert!(!event.is_deposit());
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            "\"qris_invoice.repeat_paid\""
+        );
+    }
+
+    fn repeat_invoice() -> QrisInvoice {
+        serde_json::from_str(include_str!("../vectors/qris_invoice_paid.json")).unwrap()
+    }
+
+    #[test]
+    fn an_invoice_from_a_gateway_without_repeats_reads_none() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../vectors/qris_invoice_paid.json")).unwrap();
+        value.as_object_mut().unwrap().remove("repeat_payments");
+        let invoice: QrisInvoice = serde_json::from_value(value).unwrap();
+        assert!(invoice.repeat_payments.is_empty());
+        // And it is written back as an empty list, never left out.
+        let back = serde_json::to_value(&invoice).unwrap();
+        assert_eq!(back["repeat_payments"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn only_an_exact_repeat_that_was_not_reversed_is_creditable() {
+        let invoice = repeat_invoice();
+        let exact = invoice.repeat_payments[0].clone();
+        assert!(exact.creditable_for(&invoice));
+        let reversed = QrisRepeatPayment {
+            reversed_at: Some(exact.paid_at + 60),
+            ..exact.clone()
+        };
+        assert!(!reversed.creditable_for(&invoice));
+        for amount in [
+            invoice.amount_due - 1,
+            invoice.amount_due + 1,
+            0,
+            -invoice.amount_due,
+        ] {
+            let other = QrisRepeatPayment {
+                amount,
+                ..exact.clone()
+            };
+            assert!(!other.creditable_for(&invoice), "amount {amount}");
+        }
     }
 
     #[test]

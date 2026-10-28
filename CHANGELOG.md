@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 (2026-10-28)
+
+- `wire`: `QrisInvoice::repeat_payments`, the settled payments of exactly `amount_due` that landed in
+  the invoice's window besides the payment that paid it (the payer paid the same QR again), oldest
+  first, empty when an older gateway leaves it out. An entry's `paid_at` can be earlier than the
+  invoice's `paid_at` when the feed showed it later. Each is a `QrisRepeatPayment` (`feed_tx_id`, `amount`,
+  `issuer`, `paid_at`, `reversed_at`) with `creditable_for(&invoice)`: exactly `amount_due` and not
+  reversed. Credit each one once, keyed on its `feed_tx_id`.
+- `wire`: `EventType::QrisInvoiceRepeatPaid` (`qris_invoice.repeat_paid`), sent when an invoice's
+  repeat payments change. Its `data` is a `QrisInvoiceRef` like the other QRIS events: re-fetch the
+  invoice and act on that.
+- `vectors/`: the gateway's QRIS invoice examples with `repeat_payments`.
+
+Breaking for code that builds a `QrisInvoice` with a struct literal, or matches `EventType`
+exhaustively: the new field and variant.
+
 ## 0.3.0 (2026-10-27)
 
 - `wire`: `UniqueCodeMode` (`add`, `subtract`). `CreateQrisInvoice::unique_code_mode`, left out of
