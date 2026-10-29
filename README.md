@@ -1,11 +1,12 @@
 # kenari-pay-sdk
 
-The merchant SDK for [kenari-pay](https://pay.kenari.id), a watch-only deposit gateway. A merchant
-asks for a customer's permanent deposit address, the customer sends a stablecoin to it, and the
-gateway reports the deposit through a signed webhook and a pull feed.
+The merchant SDK for kenari-pay, the watch-only deposit gateway kenari.id runs for its own
+payments. kenari asks for a customer's permanent deposit address, the customer sends a stablecoin to
+it, and the gateway reports the deposit through a signed webhook and a pull feed. The gateway takes
+no outside merchants. The SDK is public so the checks below can be read and reviewed.
 
-With forwarder addresses a merchant's whole setup is an API key and a payout wallet. What it still
-has to get right is small and easy to get wrong, and this crate does exactly that part:
+What a merchant has to get right is small and easy to get wrong, and this crate does exactly that
+part:
 
 - refuse an address that does not pay the merchant's own wallet,
 - refuse a webhook that is not signed,
@@ -32,13 +33,11 @@ run. The off by default feature `reqwest` adds `client::Client`, the calls ready
 
 ## Quickstart
 
-### 1. Get set up
+### 1. Keys
 
-Ask the kenari-pay operator for a merchant account. You get an API key (`kp_test_...` on the
-sandbox, `kp_live_...` on live) and a webhook secret (`whsec_...`), each shown once, and the
-operator lists your payout wallet. Build against the sandbox, `https://pay-sandbox.kenari.id`, and
-move to `https://pay.kenari.id` when it works. Every object carries `livemode`, and the check
-below refuses any whose `livemode` is not the mode you run in.
+A merchant holds an API key (`kp_test_...` on the sandbox, `kp_live_...` on live) and a webhook
+secret (`whsec_...`). Every object carries `livemode`, and the check below refuses any whose
+`livemode` is not the mode you run in.
 
 ### 2. Say what you trust
 
