@@ -1,0 +1,58 @@
+{
+  "invoices": [
+    {
+      "id": "ali_01JAXF3K9V0QH2M7Z5R8T4W6YC",
+      "reference": "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+      "customer_ref": "usr_acc_7f3a",
+      "status": "paid",
+      "pack": {
+        "sku_id": "sku_100k",
+        "name": "Saldo Rp100.000",
+        "price": "45.00",
+        "currency": "CNY",
+        "points": 100000
+      },
+      "purchase_url": "https://openapi.alipay.com/example/purchase?id=8c2f",
+      "qr": "https://qr.alipay.com/example8c2f",
+      "created_at": 1760700000,
+      "expires_at": 1760701800,
+      "match_until": 1760705400,
+      "paid_at": 1760700400,
+      "paid_points": 100000,
+      "drains": [
+        {
+          "id": "ald_01JAXF3M2N4P6Q8R0S2T4V6W8X",
+          "points": 100000,
+          "drained_at": 1760700400
+        }
+      ],
+      "seq": 42,
+      "livemode": true
+    },
+    {
+      "id": "ali_01JAXF4A1B2C3D4E5F6G7H8J9K",
+      "reference": "pay_01JAXF4A1B2C3D4E5F6G7H8J9M",
+      "customer_ref": "usr_acc_9b21",
+      "status": "open",
+      "pack": {
+        "sku_id": "sku_50k",
+        "name": "Saldo Rp50.000",
+        "price": "22.50",
+        "currency": "CNY",
+        "points": 50000
+      },
+      "purchase_url": "https://openapi.alipay.com/example/purchase?id=41d0",
+      "qr": "",
+      "created_at": 1760700500,
+      "expires_at": 1760702300,
+      "match_until": 1760705900,
+      "paid_at": null,
+      "paid_points": null,
+      "drains": [],
+      "seq": 43,
+      "livemode": true
+    }
+  ],
+  "next_seq": 43,
+  "has_more": false
+}

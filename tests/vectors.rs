@@ -12,19 +12,24 @@ use kenari_pay_sdk::address::{self, pins, Expect, Refusal, Trust};
 use kenari_pay_sdk::api::{Api, ApiError};
 use kenari_pay_sdk::webhook;
 use kenari_pay_sdk::wire::{
-    Address, AddressKind, CustomerDeposits, Deposit, DepositStatus, DepositsPage, ErrorBody,
-    EventType, Family, Keys, MatchedBy, Networks, PoolFile, QrisInvoice, QrisInvoiceStatus,
-    QrisInvoicesPage, QrisProvider, SweepsPage, UniqueCodeMode, WebhookEvent,
+    Address, AddressKind, AlipayInvoice, AlipayInvoiceStatus, AlipayInvoicesPage, AlipayPacks,
+    CustomerDeposits, Deposit, DepositStatus, DepositsPage, ErrorBody, EventType, Family, Keys,
+    MatchedBy, Networks, PoolFile, QrisInvoice, QrisInvoiceStatus, QrisInvoicesPage, QrisProvider,
+    SweepsPage, UniqueCodeMode, WebhookEvent,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
 const ADDRESS_EVM: &str = include_str!("../vectors/address_evm.json");
 const ADDRESS_FORWARDER: &str = include_str!("../vectors/address_evm_forwarder.json");
 const ADDRESSES: &str = include_str!("../vectors/addresses.json");
+const ALIPAY_INVOICE: &str = include_str!("../vectors/alipay_invoice_paid.json");
+const ALIPAY_PACKS: &str = include_str!("../vectors/alipay_packs.json");
+const ALIPAY_PAGE: &str = include_str!("../vectors/alipay_invoices_page.json");
 const ATTESTATION: &str = include_str!("../vectors/attestation_vector.json");
 const DEPOSIT: &str = include_str!("../vectors/deposit_confirmed.json");
 const DEPOSITS_PAGE: &str = include_str!("../vectors/deposits_page.json");
 const ERROR: &str = include_str!("../vectors/error_pool_exhausted.json");
+const ERROR_ALIPAY: &str = include_str!("../vectors/error_alipay_unavailable.json");
 const ERROR_QRIS: &str = include_str!("../vectors/error_qris_unavailable.json");
 const KEYS: &str = include_str!("../vectors/keys_list.json");
 const NETWORKS: &str = include_str!("../vectors/networks.json");
@@ -33,6 +38,7 @@ const QRIS_INVOICE: &str = include_str!("../vectors/qris_invoice_paid.json");
 const QRIS_PAGE: &str = include_str!("../vectors/qris_invoices_page.json");
 const SWEEPS_PAGE: &str = include_str!("../vectors/sweeps_page.json");
 const WEBHOOK_BODY: &str = include_str!("../vectors/webhook_deposit_confirmed.json");
+const WEBHOOK_ALIPAY: &str = include_str!("../vectors/webhook_alipay_invoice_paid.json");
 const WEBHOOK_QRIS: &str = include_str!("../vectors/webhook_qris_invoice_paid.json");
 const WEBHOOK_VECTOR: &str = include_str!("../vectors/webhook_signature_vector.json");
 
@@ -60,9 +66,13 @@ fn the_vectors_directory_is_the_contract_files_and_the_forwarder_vectors() {
         "address_evm.json",
         "address_evm_forwarder.json",
         "addresses.json",
+        "alipay_invoice_paid.json",
+        "alipay_invoices_page.json",
+        "alipay_packs.json",
         "attestation_vector.json",
         "deposit_confirmed.json",
         "deposits_page.json",
+        "error_alipay_unavailable.json",
         "error_pool_exhausted.json",
         "error_qris_unavailable.json",
         "keys_list.json",
@@ -71,6 +81,7 @@ fn the_vectors_directory_is_the_contract_files_and_the_forwarder_vectors() {
         "qris_invoice_paid.json",
         "qris_invoices_page.json",
         "sweeps_page.json",
+        "webhook_alipay_invoice_paid.json",
         "webhook_deposit_confirmed.json",
         "webhook_qris_invoice_paid.json",
         "webhook_signature_vector.json",
@@ -465,6 +476,141 @@ fn a_tampered_qris_payload_fails_the_crc() {
     assert_ne!(tampered, invoice.qris);
     let (body, crc) = tampered.split_at(tampered.len() - 4);
     assert_ne!(crc, format!("{:04X}", crc16(body.as_bytes())));
+}
+
+// ---- the Alipay examples ----------------------------------------------------------------------
+
+#[test]
+fn the_alipay_examples_decode_round_trip_and_agree_with_each_other() {
+    let packs: AlipayPacks = round_trip("alipay_packs.json", ALIPAY_PACKS);
+    assert!(packs.available);
+    assert_eq!(packs.packs.len(), 2);
+    for pack in &packs.packs {
+        assert_eq!(pack.currency, "CNY");
+        assert!(pack.points > 0, "{}", pack.sku_id);
+        // The price is Alipay's decimal text, kept as it is.
+        let (whole, cents) = pack.price.split_once('.').unwrap();
+        assert!(!whole.is_empty() && whole.bytes().all(|b| b.is_ascii_digit()));
+        assert!(cents.len() == 2 && cents.bytes().all(|b| b.is_ascii_digit()));
+    }
+
+    let invoice: AlipayInvoice = round_trip("alipay_invoice_paid.json", ALIPAY_INVOICE);
+    assert_eq!(invoice.status, AlipayInvoiceStatus::Paid);
+    assert!(invoice.livemode);
+    assert!(invoice.id.starts_with("ali_"));
+    assert!(invoice.created_at < invoice.expires_at && invoice.expires_at < invoice.match_until);
+    // The pack it sells is one on sale in the packs example.
+    assert!(packs.packs.contains(&invoice.pack), "{:?}", invoice.pack);
+    // One drain of exactly the pack's points, and `paid_points` and `paid_at` agree with it.
+    assert_eq!(invoice.drains.len(), 1);
+    let drain = &invoice.drains[0];
+    assert!(drain.id.starts_with("ald_"));
+    assert_eq!(drain.points, invoice.pack.points);
+    assert_eq!(invoice.paid_points, Some(invoice.drained_points()));
+    assert_eq!(invoice.drained_points(), invoice.pack.points);
+    assert_eq!(invoice.paid_at, Some(drain.drained_at));
+    assert!(invoice.created_at <= drain.drained_at && drain.drained_at <= invoice.match_until);
+    assert!(!invoice.purchase_url.is_empty() && !invoice.qr.is_empty());
+
+    let page: AlipayInvoicesPage = round_trip("alipay_invoices_page.json", ALIPAY_PAGE);
+    assert_eq!(page.invoices.len(), 2);
+    assert_eq!((page.next_seq, page.has_more), (43, false));
+    assert_eq!(
+        page.invoices[0], invoice,
+        "the page holds the single example"
+    );
+    // The second one is open: nothing drained, the paid fields null, and an empty QR is allowed.
+    let open = &page.invoices[1];
+    assert_eq!(open.status, AlipayInvoiceStatus::Open);
+    assert!(open.drains.is_empty());
+    assert_eq!((open.paid_at, open.paid_points), (None, None));
+    assert_eq!(open.drained_points(), 0);
+    assert_eq!(open.qr, "");
+    assert!(!open.purchase_url.is_empty());
+    assert!(packs.packs.contains(&open.pack), "{:?}", open.pack);
+    assert_ne!(open.customer_ref, invoice.customer_ref);
+    assert_eq!(page.next_seq, page.invoices.last().unwrap().seq);
+    for invoice in &page.invoices {
+        assert_eq!(invoice.paid_points.unwrap_or(0), invoice.drained_points());
+    }
+
+    let event: WebhookEvent = round_trip("webhook_alipay_invoice_paid.json", WEBHOOK_ALIPAY);
+    assert_eq!(event.event_type, EventType::AlipayInvoicePaid);
+    assert!(event.event_type.is_alipay_invoice());
+    assert_eq!((&event.deposit, &event.qris_invoice), (&None, &None));
+    let refs = event.alipay_invoice.as_ref().unwrap();
+    assert_eq!(refs.invoice_id, invoice.id);
+    assert_eq!(refs.reference, invoice.reference);
+    assert_eq!(refs.seq, invoice.seq);
+    assert_eq!(event.created_at, invoice.paid_at.unwrap());
+
+    let error: ErrorBody = round_trip("error_alipay_unavailable.json", ERROR_ALIPAY);
+    assert_eq!(error.error.code, "unavailable");
+    for status in [200, 201] {
+        assert!(Api::decode::<AlipayInvoice>(status, ALIPAY_INVOICE.as_bytes()).is_ok());
+    }
+    assert_eq!(
+        Api::decode::<AlipayInvoice>(503, ERROR_ALIPAY.as_bytes()),
+        Err(ApiError::Status {
+            code: 503,
+            error_code: Some("unavailable".into())
+        })
+    );
+}
+
+#[test]
+fn an_alipay_invoice_without_its_required_fields_does_not_decode() {
+    for required in [
+        "livemode",
+        "status",
+        "pack",
+        "reference",
+        "customer_ref",
+        "seq",
+        "match_until",
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(ALIPAY_INVOICE).unwrap();
+        value.as_object_mut().unwrap().remove(required);
+        assert!(
+            serde_json::from_value::<AlipayInvoice>(value).is_err(),
+            "{required} is required"
+        );
+    }
+    for required in ["sku_id", "points", "price", "currency"] {
+        let mut value: serde_json::Value = serde_json::from_str(ALIPAY_INVOICE).unwrap();
+        value["pack"].as_object_mut().unwrap().remove(required);
+        assert!(
+            serde_json::from_value::<AlipayInvoice>(value).is_err(),
+            "pack.{required} is required"
+        );
+    }
+    for required in ["id", "points", "drained_at"] {
+        let mut value: serde_json::Value = serde_json::from_str(ALIPAY_INVOICE).unwrap();
+        value["drains"][0].as_object_mut().unwrap().remove(required);
+        assert!(
+            serde_json::from_value::<AlipayInvoice>(value).is_err(),
+            "drains[].{required} is required"
+        );
+    }
+    // A price is text, never a number that could lose its cents.
+    let mut value: serde_json::Value = serde_json::from_str(ALIPAY_PACKS).unwrap();
+    value["packs"][0]["price"] = 22.5.into();
+    assert!(serde_json::from_value::<AlipayPacks>(value).is_err());
+    // `available` is required, and packs that are not there read as none.
+    assert!(serde_json::from_str::<AlipayPacks>(r#"{"packs":[]}"#).is_err());
+    let closed: AlipayPacks = serde_json::from_str(r#"{"available":false}"#).unwrap();
+    assert!(!closed.available && closed.packs.is_empty());
+
+    // A status this SDK does not know still decodes, as `Unknown`, with its drains.
+    let text = ALIPAY_INVOICE.replace("\"status\": \"paid\"", "\"status\": \"draining\"");
+    assert!(text.contains("draining"), "the replacement took");
+    let invoice: AlipayInvoice = serde_json::from_str(&text).unwrap();
+    assert_eq!(invoice.status, AlipayInvoiceStatus::Unknown);
+    assert_eq!(invoice.drained_points(), 100_000);
+    // A cancelled invoice is a word of its own.
+    let text = ALIPAY_INVOICE.replace("\"status\": \"paid\"", "\"status\": \"cancelled\"");
+    let invoice: AlipayInvoice = serde_json::from_str(&text).unwrap();
+    assert_eq!(invoice.status, AlipayInvoiceStatus::Cancelled);
 }
 
 #[test]

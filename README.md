@@ -178,7 +178,11 @@ fn on_webhook(signature: &str, body: &[u8], secret: &str, now: i64) -> Result<()
         // The same for a QRIS invoice: re-fetch `invoice.invoice_id` and act on that.
         let _id = &invoice.invoice_id;
     }
-    // Both are `None` for an event type this SDK does not know. Ignore it and answer 2xx.
+    if let Some(invoice) = &event.alipay_invoice {
+        // And for an Alipay invoice.
+        let _id = &invoice.invoice_id;
+    }
+    // All are `None` for an event type this SDK does not know. Ignore it and answer 2xx.
     Ok(()) // answer 2xx fast
 }
 ```
@@ -255,6 +259,38 @@ fn creditable(invoice: &QrisInvoice, live: bool) -> bool {
   Offer the customer another way to pay.
 - The feed `GET /v1/qris/invoices` follows the cursor rule above, with `Cursor::qris_invoices` and
   at most 100 invoices a page.
+
+### 8. Alipay invoices, if the merchant has an Alipay account
+
+The merchant sells points packs that are set and priced (in CNY) in Alipay: `api.alipay_packs()`
+lists them, `CreateAlipayInvoice::new(reference, customer_ref, sku_id)` asks for an invoice of one,
+and the customer pays through its `purchase_url` or `qr` (which can be empty). Alipay adds the
+points to the customer's balance there, and the gateway drains that balance into the customer's
+invoice. A customer has one `open` invoice at a time: `api.cancel_alipay_invoice(id)` frees it.
+
+```rust
+use kenari_pay_sdk::wire::{AlipayDrain, AlipayInvoice, AlipayInvoiceStatus};
+
+/// After an `alipay_invoice.*` webhook or a feed item: re-fetch with `api.alipay_invoice(id)` and
+/// credit each drain once, keyed on its `id`, never the invoice as a whole.
+fn drains_to_credit(invoice: &AlipayInvoice, live: bool) -> &[AlipayDrain] {
+    if invoice.livemode != live || invoice.status != AlipayInvoiceStatus::Paid {
+        return &[];
+    }
+    &invoice.drains
+}
+```
+
+- Credit the points of each drain once per drain `id`. A second drain, or more points than
+  `pack.points`, is still the customer's money: credit it to the same customer.
+  `drained_points()` below `pack.points` should not happen: hold the invoice for a person.
+- `expired` and `cancelled` are not final. A drain before `match_until` still turns the invoice
+  `paid` (the Alipay link is never withdrawn), so keep watching it until then.
+- The refusals are `409 conflict` (the customer has an open invoice), `404 not_found` (the pack is
+  not on sale) and `503 unavailable` (Alipay is not available right now). Offer the customer
+  another way to pay.
+- The feed `GET /v1/alipay/invoices` follows the cursor rule above, with `Cursor::alipay_invoices`
+  and at most 100 invoices a page.
 
 ## Tests against the gateway's own examples
 

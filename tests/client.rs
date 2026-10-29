@@ -11,7 +11,9 @@ use std::time::Duration;
 
 use kenari_pay_sdk::api::ApiError;
 use kenari_pay_sdk::client::{default_http, Client, ClientError, CONNECT_TIMEOUT, TOTAL_TIMEOUT};
-use kenari_pay_sdk::wire::{CreateQrisInvoice, Family, QrisInvoiceStatus};
+use kenari_pay_sdk::wire::{
+    AlipayInvoiceStatus, CreateAlipayInvoice, CreateQrisInvoice, Family, QrisInvoiceStatus,
+};
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
 
@@ -156,6 +158,11 @@ async fn every_call_reaches_its_route() {
         reply(201, include_str!("../vectors/qris_invoice_paid.json")),
         reply(200, include_str!("../vectors/qris_invoice_paid.json")),
         reply(200, include_str!("../vectors/qris_invoices_page.json")),
+        reply(200, include_str!("../vectors/alipay_packs.json")),
+        reply(201, include_str!("../vectors/alipay_invoice_paid.json")),
+        reply(200, include_str!("../vectors/alipay_invoice_paid.json")),
+        reply(200, include_str!("../vectors/alipay_invoices_page.json")),
+        reply(200, include_str!("../vectors/alipay_invoice_paid.json")),
     ]);
     let client = Client::new(&base, KEY).unwrap();
     assert_eq!(client.deposits(42, 100).await.unwrap().next_seq, 43);
@@ -183,6 +190,21 @@ async fn every_call_reaches_its_route() {
     assert_eq!(again.as_ref(), Some(&made));
     let page = client.qris_invoices(42, 100).await.unwrap();
     assert_eq!(page.invoices[1].status, QrisInvoiceStatus::Open);
+    let packs = client.alipay_packs().await.unwrap();
+    assert!(packs.available);
+    let alipay = CreateAlipayInvoice::new(
+        "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+        "usr_acc_7f3a",
+        &packs.packs[1].sku_id,
+    );
+    let made = client.create_alipay_invoice(&alipay).await.unwrap();
+    assert_eq!(made.reference, alipay.reference);
+    let again = client.alipay_invoice(&alipay.reference).await.unwrap();
+    assert_eq!(again.as_ref(), Some(&made));
+    let page = client.alipay_invoices(42, 100).await.unwrap();
+    assert_eq!(page.invoices[1].status, AlipayInvoiceStatus::Open);
+    let cancelled = client.cancel_alipay_invoice(&made.id).await.unwrap();
+    assert_eq!(cancelled.id, made.id);
     let seen = server.join().unwrap();
     let request_lines: Vec<String> = seen.iter().map(|r| head_lines(r)[0].clone()).collect();
     assert_eq!(
@@ -199,6 +221,11 @@ async fn every_call_reaches_its_route() {
             "post /v1/qris/invoices http/1.1",
             "get /v1/qris/invoices/pay_01jaxf2q8n3m6p9r1t4v7x0z2c http/1.1",
             "get /v1/qris/invoices?after_seq=42&limit=100 http/1.1",
+            "get /v1/alipay/packs http/1.1",
+            "post /v1/alipay/invoices http/1.1",
+            "get /v1/alipay/invoices/pay_01jaxf2q8n3m6p9r1t4v7x0z2c http/1.1",
+            "get /v1/alipay/invoices?after_seq=42&limit=100 http/1.1",
+            "post /v1/alipay/invoices/ali_01jaxf3k9v0qh2m7z5r8t4w6yc/cancel http/1.1",
         ]
     );
     let body = seen[8].split("\r\n\r\n").nth(1).unwrap();
@@ -213,6 +240,22 @@ async fn every_call_reaches_its_route() {
         })
     );
     assert!(head_lines(&seen[8]).contains(&"content-type: application/json".to_string()));
+    let body = seen[12].split("\r\n\r\n").nth(1).unwrap();
+    let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({
+            "reference": "pay_01JAXF2Q8N3M6P9R1T4V7X0Z2C",
+            "customer_ref": "usr_acc_7f3a",
+            "sku_id": "sku_100k"
+        })
+    );
+    assert!(head_lines(&seen[12]).contains(&"content-type: application/json".to_string()));
+    // The cancel has no body, so no content type.
+    assert!(!head_lines(&seen[15])
+        .iter()
+        .any(|l| l.starts_with("content-type:")));
+    assert_eq!(seen[15].split("\r\n\r\n").nth(1).unwrap(), "");
 }
 
 #[tokio::test]
@@ -255,6 +298,52 @@ async fn a_404_on_a_qris_invoice_is_none_and_a_503_keeps_its_code() {
         })
     );
     assert_eq!(error.to_string(), "gateway answered 503");
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn a_404_on_an_alipay_invoice_is_none_and_the_refusals_keep_their_codes() {
+    let conflict = r#"{"error":{"code":"conflict","message":"open invoice"}}"#;
+    let (base, server) = serve(vec![
+        reply(
+            404,
+            r#"{"error":{"code":"not_found","message":"no such invoice"}}"#,
+        ),
+        reply(
+            503,
+            include_str!("../vectors/error_alipay_unavailable.json"),
+        ),
+        reply(409, conflict),
+        reply(
+            404,
+            r#"{"error":{"code":"not_found","message":"no such invoice"}}"#,
+        ),
+        reply(409, conflict),
+    ]);
+    let client = Client::new(&base, KEY).unwrap();
+    assert_eq!(client.alipay_invoice("ali_missing").await.unwrap(), None);
+    let invoice = CreateAlipayInvoice::new("pay_1", "usr_1", "sku_50k");
+    let status = |code: u16, word: &str| {
+        ClientError::Api(ApiError::Status {
+            code,
+            error_code: Some(word.into()),
+        })
+    };
+    let error = client.create_alipay_invoice(&invoice).await.unwrap_err();
+    assert_eq!(error, status(503, "unavailable"));
+    assert_eq!(error.to_string(), "gateway answered 503");
+    // One open invoice per customer.
+    let error = client.create_alipay_invoice(&invoice).await.unwrap_err();
+    assert_eq!(error, status(409, "conflict"));
+    // A cancel of an invoice that is not there is an error, not `None`, and of a paid one a
+    // conflict.
+    let error = client
+        .cancel_alipay_invoice("ali_missing")
+        .await
+        .unwrap_err();
+    assert_eq!(error, status(404, "not_found"));
+    let error = client.cancel_alipay_invoice("ali_paid").await.unwrap_err();
+    assert_eq!(error, status(409, "conflict"));
     server.join().unwrap();
 }
 
@@ -352,6 +441,9 @@ async fn a_dot_segment_is_refused_before_anything_is_sent() {
         assert_eq!(client.customer_deposits(value, 10).await.unwrap_err(), want);
         assert_eq!(client.deposit(value).await.unwrap_err(), want);
         assert_eq!(client.reissue(value).await.unwrap_err(), want);
+        assert_eq!(client.qris_invoice(value).await.unwrap_err(), want);
+        assert_eq!(client.alipay_invoice(value).await.unwrap_err(), want);
+        assert_eq!(client.cancel_alipay_invoice(value).await.unwrap_err(), want);
     }
     assert_eq!(
         want.to_string(),

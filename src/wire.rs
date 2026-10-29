@@ -13,7 +13,8 @@
 //!   network it comes from cannot be told apart from a sandbox one, so it fails to decode.
 //! - Token amounts stay decimal strings, because a token amount can exceed 2^53.
 //!   [`Deposit::amount_units`] parses one. QRIS amounts are whole rupiah as JSON integers, which
-//!   never come near 2^53.
+//!   never come near 2^53. Alipay points are whole numbers as JSON integers too, and an Alipay
+//!   pack's `price` is a decimal string in its `currency`, shown as it is.
 
 use std::collections::BTreeMap;
 
@@ -123,6 +124,16 @@ pub enum EventType {
     /// repeat payment, or one read reversed later).
     #[serde(rename = "qris_invoice.repeat_paid")]
     QrisInvoiceRepeatPaid,
+    /// `alipay_invoice.paid`: the first drain of the customer's balance into the invoice.
+    #[serde(rename = "alipay_invoice.paid")]
+    AlipayInvoicePaid,
+    /// `alipay_invoice.drained`: a later drain into an invoice that is already `paid`.
+    #[serde(rename = "alipay_invoice.drained")]
+    AlipayInvoiceDrained,
+    /// `alipay_invoice.expired`: the link expired, or the merchant cancelled the invoice, with
+    /// nothing drained.
+    #[serde(rename = "alipay_invoice.expired")]
+    AlipayInvoiceExpired,
     /// An event type this SDK does not know. Answer 2xx and ignore it.
     #[serde(other, rename = "unknown")]
     Unknown,
@@ -139,6 +150,9 @@ impl EventType {
             EventType::QrisInvoicePaid => "qris_invoice.paid",
             EventType::QrisInvoiceExpired => "qris_invoice.expired",
             EventType::QrisInvoiceRepeatPaid => "qris_invoice.repeat_paid",
+            EventType::AlipayInvoicePaid => "alipay_invoice.paid",
+            EventType::AlipayInvoiceDrained => "alipay_invoice.drained",
+            EventType::AlipayInvoiceExpired => "alipay_invoice.expired",
             EventType::Unknown => "unknown",
         }
     }
@@ -161,6 +175,16 @@ impl EventType {
             EventType::QrisInvoicePaid
                 | EventType::QrisInvoiceExpired
                 | EventType::QrisInvoiceRepeatPaid
+        )
+    }
+
+    /// Whether the event is about an Alipay invoice, so its `data` is an [`AlipayInvoiceRef`].
+    pub fn is_alipay_invoice(self) -> bool {
+        matches!(
+            self,
+            EventType::AlipayInvoicePaid
+                | EventType::AlipayInvoiceDrained
+                | EventType::AlipayInvoiceExpired
         )
     }
 }
@@ -671,6 +695,176 @@ pub struct QrisInvoicesPage {
     pub has_more: bool,
 }
 
+/// A points pack on sale through Alipay, an entry of [`AlipayPacks::packs`] and the
+/// [`AlipayInvoice::pack`] an invoice sells.
+///
+/// Packs and their prices are set in Alipay, so a merchant sells a pack and never an amount of its
+/// own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlipayPack {
+    /// The pack's id at Alipay, the `sku_id` of [`CreateAlipayInvoice`].
+    pub sku_id: String,
+    /// The pack's name as Alipay has it, such as `Saldo Rp100.000`.
+    pub name: String,
+    /// The price as Alipay gives it, a decimal string in `currency` such as `45.00`. Show it as it
+    /// is.
+    pub price: String,
+    /// The price's currency, `CNY`.
+    pub currency: String,
+    /// The points the pack adds to the customer's balance at Alipay. What a point is worth is the
+    /// merchant's rule (kenari: Rp1).
+    pub points: i64,
+}
+
+/// The answer of `GET /v1/alipay/packs`: the packs on sale now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlipayPacks {
+    /// `false` when the merchant has no Alipay account, the account is off, or Alipay says new
+    /// purchases are not allowed. `packs` is then empty.
+    pub available: bool,
+    /// The packs on sale. Empty when an answer leaves it out.
+    #[serde(default)]
+    pub packs: Vec<AlipayPack>,
+}
+
+/// Where an Alipay invoice is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlipayInvoiceStatus {
+    /// The Alipay link can be paid and nothing was drained yet. Do not credit.
+    Open,
+    /// The link ended at `expires_at` with nothing drained. A drain can still come until
+    /// `match_until` and turn it `paid`, so keep the payment pending until then.
+    Expired,
+    /// The merchant cancelled it with nothing drained. Like `Expired`, a drain can still come
+    /// until `match_until`, because the Alipay link is not withdrawn.
+    Cancelled,
+    /// At least one drain. Credit each entry of [`AlipayInvoice::drains`] once.
+    Paid,
+    /// A status this SDK does not know. Never credit on it alone, hold it for a person.
+    #[serde(other)]
+    Unknown,
+}
+
+impl AlipayInvoiceStatus {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AlipayInvoiceStatus::Open => "open",
+            AlipayInvoiceStatus::Expired => "expired",
+            AlipayInvoiceStatus::Cancelled => "cancelled",
+            AlipayInvoiceStatus::Paid => "paid",
+            AlipayInvoiceStatus::Unknown => "unknown",
+        }
+    }
+}
+
+/// One drain of the customer's points balance at Alipay into an invoice, an entry of
+/// [`AlipayInvoice::drains`]. A drain is final: the gateway lists one only after Alipay confirmed
+/// the points were taken off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlipayDrain {
+    /// `ald_...`, unique and stable. Credit each drain once, keyed on it.
+    pub id: String,
+    /// The points drained.
+    pub points: i64,
+    /// When the drain was confirmed, in unix seconds.
+    pub drained_at: i64,
+}
+
+/// The body of `POST /v1/alipay/invoices`: ask for an Alipay invoice for one pack.
+///
+/// The same `reference` again returns the invoice made the first time, whatever the rest of the
+/// body says, so a retry after a timeout never makes a second invoice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateAlipayInvoice {
+    /// The merchant's own id for this payment, 1 to 128 characters, unique per merchant.
+    pub reference: String,
+    /// The merchant's fixed id for the customer, 1 to 128 characters with no leading or trailing
+    /// space. Alipay keeps the customer's points under it, so it must never change for a customer.
+    pub customer_ref: String,
+    /// One of the packs `GET /v1/alipay/packs` lists now.
+    pub sku_id: String,
+}
+
+impl CreateAlipayInvoice {
+    /// The request for the pack `sku_id`.
+    pub fn new(reference: &str, customer_ref: &str, sku_id: &str) -> CreateAlipayInvoice {
+        CreateAlipayInvoice {
+            reference: reference.to_string(),
+            customer_ref: customer_ref.to_string(),
+            sku_id: sku_id.to_string(),
+        }
+    }
+}
+
+/// An Alipay invoice, as `POST /v1/alipay/invoices`, `GET /v1/alipay/invoices/{id_or_reference}`,
+/// its cancel and the Alipay feed show it.
+///
+/// The customer pays in Alipay, Alipay adds the pack's points to the customer's balance there, and
+/// the gateway drains that balance into the customer's invoice. Credit the points of each drain,
+/// once per [`AlipayDrain::id`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlipayInvoice {
+    /// `ali_...`
+    pub id: String,
+    /// The merchant's own id for the payment, echoed.
+    pub reference: String,
+    /// The merchant's id for the customer, echoed.
+    pub customer_ref: String,
+    /// Where the invoice is in its life.
+    pub status: AlipayInvoiceStatus,
+    /// The pack the invoice sells, as it was when the invoice was made.
+    pub pack: AlipayPack,
+    /// The Alipay link to open. It stops working at `expires_at` and proves no payment.
+    pub purchase_url: String,
+    /// An Alipay QR image URL to show, which can be empty. It stops working at `expires_at` and
+    /// proves no payment.
+    pub qr: String,
+    /// When the invoice was made, in unix seconds.
+    pub created_at: i64,
+    /// When the Alipay link ends, in unix seconds.
+    pub expires_at: i64,
+    /// Until when the invoice takes drains of the customer's balance, in unix seconds: an
+    /// `expired` or `cancelled` invoice still turns `paid` on a drain before it.
+    pub match_until: i64,
+    /// When the first drain was made, null until then.
+    pub paid_at: Option<i64>,
+    /// The sum of `drains[].points`, null until the first drain.
+    pub paid_points: Option<i64>,
+    /// Every drain into this invoice, oldest first, empty while nothing was drained. Usually one
+    /// of exactly `pack.points`. More points than that, or a second drain, are still the
+    /// customer's money: credit them to the same customer, once per drain id. Fewer points than
+    /// `pack.points` should not happen: hold the invoice for a person.
+    #[serde(default)]
+    pub drains: Vec<AlipayDrain>,
+    /// The feed position, reassigned on every transition and every drain.
+    pub seq: i64,
+    /// `true` on the live gateway, `false` on the sandbox.
+    pub livemode: bool,
+}
+
+impl AlipayInvoice {
+    /// The sum of the points of [`AlipayInvoice::drains`], 0 while nothing was drained. The
+    /// gateway's `paid_points` is the same sum. A sum past `i64::MAX` saturates there.
+    pub fn drained_points(&self) -> i64 {
+        self.drains
+            .iter()
+            .fold(0i64, |sum, drain| sum.saturating_add(drain.points))
+    }
+}
+
+/// The answer of `GET /v1/alipay/invoices`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlipayInvoicesPage {
+    /// The invoices with `seq` above the cursor, ascending.
+    pub invoices: Vec<AlipayInvoice>,
+    /// The last `seq` of the page, or the cursor when the page is empty.
+    pub next_seq: i64,
+    /// Whether more follow.
+    pub has_more: bool,
+}
+
 /// The body of a non-2xx answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorBody {
@@ -712,12 +906,25 @@ pub struct QrisInvoiceRef {
     pub seq: i64,
 }
 
+/// The ids an Alipay invoice webhook carries. Like [`QrisInvoiceRef`] it carries nothing else on
+/// purpose, so act on a re-fetch of the invoice and never on the webhook.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlipayInvoiceRef {
+    /// `ali_...`, the id to re-fetch with `GET /v1/alipay/invoices/{id}`.
+    pub invoice_id: String,
+    /// The merchant's own id for the payment.
+    pub reference: String,
+    /// The feed position when the event was made.
+    pub seq: i64,
+}
+
 /// A webhook event, after [`crate::webhook::verify`] has checked its signature.
 ///
 /// The envelope (`id`, `type`, `created_at`) is read first, and `data` only for a type this SDK
 /// knows: the ids of a deposit for a `deposit.*` type, the ids of a QRIS invoice for a
-/// `qris_invoice.*` type. So an event of a type this SDK does not know is still an event, with
-/// [`EventType::Unknown`] and neither `deposit` nor `qris_invoice`, whatever its `data` holds.
+/// `qris_invoice.*` type, the ids of an Alipay invoice for an `alipay_invoice.*` type. So an event
+/// of a type this SDK does not know is still an event, with [`EventType::Unknown`] and none of
+/// `deposit`, `qris_invoice` and `alipay_invoice`, whatever its `data` holds.
 /// Answer it 2xx and ignore it. A known type whose `data` is not the ids of that type is not an
 /// event at all, and fails to decode.
 ///
@@ -738,14 +945,19 @@ pub struct WebhookEvent {
     /// The ids of the QRIS invoice, `Some` for every `qris_invoice.*` type and `None` for every
     /// other type. On the wire this is `data`.
     pub qris_invoice: Option<QrisInvoiceRef>,
+    /// The ids of the Alipay invoice, `Some` for every `alipay_invoice.*` type and `None` for
+    /// every other type. On the wire this is `data`.
+    pub alipay_invoice: Option<AlipayInvoiceRef>,
 }
 
 impl Serialize for WebhookEvent {
-    /// The envelope, and `data` from whichever of `deposit` and `qris_invoice` is set. When both
-    /// are set, which decoding never makes, `deposit` wins.
+    /// The envelope, and `data` from whichever of `deposit`, `qris_invoice` and `alipay_invoice`
+    /// is set. When more than one is set, which decoding never makes, the first of them in that
+    /// order wins.
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let has_data = self.deposit.is_some() || self.qris_invoice.is_some();
+        let has_data =
+            self.deposit.is_some() || self.qris_invoice.is_some() || self.alipay_invoice.is_some();
         let mut out = serializer.serialize_struct("WebhookEvent", if has_data { 4 } else { 3 })?;
         out.serialize_field("id", &self.id)?;
         out.serialize_field("type", &self.event_type)?;
@@ -753,6 +965,8 @@ impl Serialize for WebhookEvent {
         if let Some(deposit) = &self.deposit {
             out.serialize_field("data", deposit)?;
         } else if let Some(invoice) = &self.qris_invoice {
+            out.serialize_field("data", invoice)?;
+        } else if let Some(invoice) = &self.alipay_invoice {
             out.serialize_field("data", invoice)?;
         }
         out.end()
@@ -774,7 +988,7 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
     type Error = &'static str;
 
     fn try_from(raw: RawWebhookEvent) -> Result<WebhookEvent, Self::Error> {
-        let (mut deposit, mut qris_invoice) = (None, None);
+        let (mut deposit, mut qris_invoice, mut alipay_invoice) = (None, None, None);
         if raw.event_type.is_deposit() {
             deposit = Some(
                 serde_json::from_value(raw.data)
@@ -784,6 +998,10 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
             qris_invoice = Some(serde_json::from_value(raw.data).map_err(|_| {
                 "a QRIS invoice event needs data with invoice_id, reference and seq"
             })?);
+        } else if raw.event_type.is_alipay_invoice() {
+            alipay_invoice = Some(serde_json::from_value(raw.data).map_err(|_| {
+                "an Alipay invoice event needs data with invoice_id, reference and seq"
+            })?);
         }
         Ok(WebhookEvent {
             id: raw.id,
@@ -791,6 +1009,7 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
             created_at: raw.created_at,
             deposit,
             qris_invoice,
+            alipay_invoice,
         })
     }
 }
@@ -923,6 +1142,11 @@ mod tests {
         assert_eq!(provider, QrisProvider::Unknown);
         let event: EventType = serde_json::from_str("\"qris_invoice.refunded\"").unwrap();
         assert_eq!(event, EventType::Unknown);
+        let event: EventType = serde_json::from_str("\"alipay_invoice.refunded\"").unwrap();
+        assert_eq!(event, EventType::Unknown);
+        let alipay: AlipayInvoiceStatus = serde_json::from_str("\"draining\"").unwrap();
+        assert_eq!(alipay, AlipayInvoiceStatus::Unknown);
+        assert!(serde_json::from_str::<AlipayInvoiceStatus>("1").is_err());
         assert!(serde_json::from_str::<QrisInvoiceStatus>("1").is_err());
         // A value that is not text is still an error, not an `Unknown`.
         assert!(serde_json::from_str::<DepositStatus>("7").is_err());
@@ -982,6 +1206,49 @@ mod tests {
         }
     }
 
+    fn alipay_invoice() -> AlipayInvoice {
+        serde_json::from_str(include_str!("../vectors/alipay_invoice_paid.json")).unwrap()
+    }
+
+    #[test]
+    fn drained_points_is_the_sum_of_the_drains() {
+        let mut invoice = alipay_invoice();
+        assert_eq!(invoice.drained_points(), 100_000);
+        invoice.drains.push(AlipayDrain {
+            id: "ald_2".into(),
+            points: 50_000,
+            drained_at: invoice.paid_at.unwrap() + 60,
+        });
+        assert_eq!(invoice.drained_points(), 150_000);
+        invoice.drains.clear();
+        assert_eq!(invoice.drained_points(), 0);
+        invoice.drains = vec![
+            AlipayDrain {
+                id: "ald_a".into(),
+                points: i64::MAX,
+                drained_at: 1,
+            },
+            AlipayDrain {
+                id: "ald_b".into(),
+                points: 1,
+                drained_at: 2,
+            },
+        ];
+        assert_eq!(invoice.drained_points(), i64::MAX);
+    }
+
+    #[test]
+    fn an_alipay_invoice_from_a_gateway_without_drains_reads_none() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../vectors/alipay_invoice_paid.json")).unwrap();
+        value.as_object_mut().unwrap().remove("drains");
+        let invoice: AlipayInvoice = serde_json::from_value(value).unwrap();
+        assert!(invoice.drains.is_empty());
+        assert_eq!(invoice.drained_points(), 0);
+        let back = serde_json::to_value(&invoice).unwrap();
+        assert_eq!(back["drains"], serde_json::json!([]));
+    }
+
     #[test]
     fn the_known_words_round_trip() {
         for (word, status) in [
@@ -1005,6 +1272,10 @@ mod tests {
             ("deposit.reverted", EventType::DepositReverted),
             ("qris_invoice.paid", EventType::QrisInvoicePaid),
             ("qris_invoice.expired", EventType::QrisInvoiceExpired),
+            ("qris_invoice.repeat_paid", EventType::QrisInvoiceRepeatPaid),
+            ("alipay_invoice.paid", EventType::AlipayInvoicePaid),
+            ("alipay_invoice.drained", EventType::AlipayInvoiceDrained),
+            ("alipay_invoice.expired", EventType::AlipayInvoiceExpired),
         ] {
             let json = format!("\"{word}\"");
             assert_eq!(serde_json::from_str::<EventType>(&json).unwrap(), event);
@@ -1016,8 +1287,31 @@ mod tests {
                 word.starts_with("qris_invoice."),
                 "{word}"
             );
+            assert_eq!(
+                event.is_alipay_invoice(),
+                word.starts_with("alipay_invoice."),
+                "{word}"
+            );
         }
-        assert!(!EventType::Unknown.is_deposit() && !EventType::Unknown.is_qris_invoice());
+        assert!(
+            !EventType::Unknown.is_deposit()
+                && !EventType::Unknown.is_qris_invoice()
+                && !EventType::Unknown.is_alipay_invoice()
+        );
+        for (word, status) in [
+            ("open", AlipayInvoiceStatus::Open),
+            ("expired", AlipayInvoiceStatus::Expired),
+            ("cancelled", AlipayInvoiceStatus::Cancelled),
+            ("paid", AlipayInvoiceStatus::Paid),
+        ] {
+            let json = format!("\"{word}\"");
+            assert_eq!(
+                serde_json::from_str::<AlipayInvoiceStatus>(&json).unwrap(),
+                status
+            );
+            assert_eq!(serde_json::to_string(&status).unwrap(), json);
+            assert_eq!(status.as_str(), word);
+        }
         for (word, status) in [
             ("open", QrisInvoiceStatus::Open),
             ("paid", QrisInvoiceStatus::Paid),

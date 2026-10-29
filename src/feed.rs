@@ -1,7 +1,7 @@
-//! Pure helpers for the pull feeds, `GET /v1/deposits`, `GET /v1/sweeps` and
-//! `GET /v1/qris/invoices`.
+//! Pure helpers for the pull feeds, `GET /v1/deposits`, `GET /v1/sweeps`,
+//! `GET /v1/qris/invoices` and `GET /v1/alipay/invoices`.
 //!
-//! All three are change feeds ordered by `seq`. Because `seq` is reassigned at every state change, a
+//! All four are change feeds ordered by `seq`. Because `seq` is reassigned at every state change, a
 //! deposit appears again, with a higher `seq`, each time it moves from `detected` to `confirmed`
 //! and so on. The feed is the backstop under the webhook, and it is the truth.
 //!
@@ -17,7 +17,8 @@
 //! - On the first item that fails, stop. Do not skip it and do not read on, because the cursor
 //!   would then pass an item you never processed and the feed would not show it again.
 //! - Make the processing idempotent per deposit key (per invoice id for QRIS), because an item is delivered again after any
-//!   later state change and after a crash between the effect and the stored cursor.
+//!   later state change and after a crash between the effect and the stored cursor. For Alipay
+//!   the unit of a credit is the drain: credit each drain once per its id.
 //! - An item you can never process (a malformed one, say) is a decision of yours, not the feed's.
 //!   Put it aside where a person will see it, then advance past it, or the feed stops there for good.
 //! - Credit only a deposit that is `confirmed` and not `below_minimum`, after a re-fetch of it with
@@ -25,6 +26,10 @@
 //! - Credit only a QRIS invoice that is `paid`, after a re-fetch of it with
 //!   `GET /v1/qris/invoices/{id}`, and hold one whose `paid_amount` is not its `amount_due`
 //!   ([`QrisInvoice::paid_exactly`](crate::wire::QrisInvoice::paid_exactly)) for a person.
+//! - Credit the points of an Alipay invoice's drains, after a re-fetch of it with
+//!   `GET /v1/alipay/invoices/{id}`, once per drain id, and hold one whose drained points are fewer
+//!   than its pack's ([`AlipayInvoice::drained_points`](crate::wire::AlipayInvoice::drained_points))
+//!   for a person.
 //!
 //! ```
 //! use kenari_pay_sdk::api::{Api, Method};
@@ -63,12 +68,14 @@ pub enum Feed {
     Sweeps,
     /// `GET /v1/qris/invoices`
     QrisInvoices,
+    /// `GET /v1/alipay/invoices`
+    AlipayInvoices,
 }
 
 /// A position in a feed: the `seq` of the last item processed. It starts at 0.
 ///
 /// Store [`Cursor::after_seq`] and build the cursor from it again with [`Cursor::deposits`],
-/// [`Cursor::sweeps`] or [`Cursor::qris_invoices`]. See the [module](self) for the rule that decides when to advance it.
+/// [`Cursor::sweeps`], [`Cursor::qris_invoices`] or [`Cursor::alipay_invoices`]. See the [module](self) for the rule that decides when to advance it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
     feed: Feed,
@@ -103,6 +110,15 @@ impl Cursor {
         }
     }
 
+    /// A cursor on the Alipay invoice feed after `after_seq`, 0 for the start. A negative stored
+    /// value counts as 0. Its pages hold at most 100 invoices.
+    pub fn alipay_invoices(after_seq: i64) -> Cursor {
+        Cursor {
+            feed: Feed::AlipayInvoices,
+            after_seq: after_seq.max(0),
+        }
+    }
+
     /// The feed this cursor reads.
     pub fn feed(&self) -> Feed {
         self.feed
@@ -113,13 +129,14 @@ impl Cursor {
         self.after_seq
     }
 
-    /// The request for the next page, `limit` items at most (1 to 500, 1 to 100 for the QRIS
-    /// invoice feed).
+    /// The request for the next page, `limit` items at most (1 to 500, 1 to 100 for the QRIS and
+    /// Alipay invoice feeds).
     pub fn next(&self, api: &Api, limit: u32) -> HttpRequest {
         match self.feed {
             Feed::Deposits => api.deposits(self.after_seq, limit),
             Feed::Sweeps => api.sweeps(self.after_seq, limit),
             Feed::QrisInvoices => api.qris_invoices(self.after_seq, limit),
+            Feed::AlipayInvoices => api.alipay_invoices(self.after_seq, limit),
         }
     }
 

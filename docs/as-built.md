@@ -241,6 +241,24 @@ Where the two differ the contract files win:
   CRC-16/CCITT-FALSE: the CRC, tag 01 `12`, tag 54 equal to `amount_due`, ascending tags, and that
   removing tag 54 gives the brief's static test QRIS back.
 
+## alipay (0.5.0)
+
+Built from the gateway's `docs/api.md` section "Alipay invoices" and its five Alipay contract files.
+
+- `AlipayInvoice::drains` is `#[serde(default)]`, so an answer without it reads as no drains, and
+  it is always written back as a list. `paid_at` and `paid_points` are `Option`.
+- `AlipayPack::price` stays Alipay's decimal text and `points` is `i64`. `AlipayPacks::packs` is
+  `#[serde(default)]`, since the gateway sends `[]` when `available` is false.
+- `AlipayInvoiceStatus` has `Unknown` like the other status enums, so a status the contract does
+  not list (the design's `draining`, for one) decodes and is never credited on its own.
+- `AlipayInvoice::drained_points` sums the drains with a saturating add, the gateway's
+  `paid_points`. It is the only helper: the credit unit is the drain, keyed on its id.
+- `WebhookEvent` gained `alipay_invoice: Option<AlipayInvoiceRef>` beside `deposit` and
+  `qris_invoice`, the same way as for QRIS, and its `Serialize` writes `data` from whichever is set.
+- `cancel_alipay_invoice` is a `POST` with no body, like `reissue`, and a 404 on it is an error, not
+  `None`. There is no call for `POST /v1/sandbox/alipay/invoices/{id}/pay`, as there is none for
+  the other sandbox routes.
+
 ## vectors and the gateway
 
 - `scripts/sync-vectors.sh` removes `vectors/*.json` first, so a file the gateway deleted goes too.
