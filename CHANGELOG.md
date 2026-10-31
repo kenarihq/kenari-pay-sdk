@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+The QRIS payment check: for a customer who says they paid, the merchant asks the gateway to look
+for the payment now and to keep watching the invoice for a day.
+
+- `api` and `client`: `check_qris_invoice`, `POST /v1/qris/invoices/{id_or_reference}/check` with no
+  body and the same path segment rule as the other calls. The gateway starts or extends a 24 hour
+  watch of the invoice, does a fresh read of the merchant's GoPay feed and answers within about
+  15 s, inside the default client's 20 s `TOTAL_TIMEOUT`. It answers `409` (code `invalid_request`)
+  while payment checks are off, which is how they start, and a 404 is an error, not `None`.
+- `wire`: `QrisCheck` (`invoice`, `verdict`, `payment`, `watch`, `read`), `QrisCheckVerdict`
+  (`paid`, `needs_operator`, `cannot_read`, `not_found`), `QrisWatch` (`started`, `extended`,
+  `full`, `too_old`, `not_needed`), both with `Unknown` for a word the SDK does not know,
+  `QrisCheckPayment` (`feed_tx_id`, `amount`, `issuer`, `status`, `transaction_time`) and
+  `QrisCheckRead` (`fresh`, `read_at`, `covered_until`, `feed_failing`). A check can pay the
+  invoice but never chooses where money goes: credit by the invoice and its `qris_invoice.paid` as
+  always.
+- `wire`: `QrisInvoice::watch_until`, until when a payment check watches the invoice, `None` when it
+  was never watched and when an older gateway leaves it out.
+- `vectors/`: the gateway's `qris_check.json`, and its QRIS invoice examples with `watch_until`.
+
+Breaking for code that builds a `QrisInvoice` with a struct literal: the new field.
+
 ## 0.5.0 (2026-10-28)
 
 Alipay invoices: the merchant sells a points pack set in Alipay, the gateway drains the customer's

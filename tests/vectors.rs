@@ -14,8 +14,9 @@ use kenari_pay_sdk::webhook;
 use kenari_pay_sdk::wire::{
     Address, AddressKind, AlipayInvoice, AlipayInvoiceStatus, AlipayInvoicesPage, AlipayPacks,
     CustomerDeposits, Deposit, DepositStatus, DepositsPage, ErrorBody, EventType, Family, Keys,
-    MatchedBy, Networks, PoolFile, QrisInvoice, QrisInvoiceStatus, QrisInvoicesPage, QrisProvider,
-    SweepsPage, UniqueCodeMode, WebhookEvent,
+    MatchedBy, Networks, PoolFile, QrisCheck, QrisCheckPayment, QrisCheckVerdict, QrisInvoice,
+    QrisInvoiceStatus, QrisInvoicesPage, QrisProvider, QrisWatch, SweepsPage, UniqueCodeMode,
+    WebhookEvent,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -34,6 +35,7 @@ const ERROR_QRIS: &str = include_str!("../vectors/error_qris_unavailable.json");
 const KEYS: &str = include_str!("../vectors/keys_list.json");
 const NETWORKS: &str = include_str!("../vectors/networks.json");
 const POOL_FILE: &str = include_str!("../vectors/pool_file.json");
+const QRIS_CHECK: &str = include_str!("../vectors/qris_check.json");
 const QRIS_INVOICE: &str = include_str!("../vectors/qris_invoice_paid.json");
 const QRIS_PAGE: &str = include_str!("../vectors/qris_invoices_page.json");
 const SWEEPS_PAGE: &str = include_str!("../vectors/sweeps_page.json");
@@ -78,6 +80,7 @@ fn the_vectors_directory_is_the_contract_files_and_the_forwarder_vectors() {
         "keys_list.json",
         "networks.json",
         "pool_file.json",
+        "qris_check.json",
         "qris_invoice_paid.json",
         "qris_invoices_page.json",
         "sweeps_page.json",
@@ -314,6 +317,9 @@ fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
     assert!(invoice.livemode);
     assert!(invoice.created_at < invoice.expires_at && invoice.expires_at < invoice.match_until);
     assert_eq!(invoice.payer_issuer.as_deref(), Some("DANA"));
+    // It was never watched by a payment check: the field is there, and null.
+    assert_eq!(invoice.watch_until, None);
+    assert!(QRIS_INVOICE.contains("\"watch_until\": null"));
     // The example was paid twice: one repeat of exactly amount_due, after the first payment and
     // inside the window, not reversed.
     assert_eq!(invoice.repeat_payments.len(), 1);
@@ -347,6 +353,7 @@ fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
     );
     assert!(!open.paid_exactly());
     assert!(open.repeat_payments.is_empty());
+    assert_eq!(open.watch_until, None);
     assert_eq!(open.unique_code_mode, UniqueCodeMode::Add);
     assert_eq!(
         open.amount_due,
@@ -467,6 +474,144 @@ fn a_qris_invoice_without_livemode_or_with_another_paid_amount_is_not_creditable
     let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
     value["unique_code"] = (-1).into();
     assert!(serde_json::from_value::<QrisInvoice>(value).is_err());
+}
+
+#[test]
+fn the_qris_check_example_decodes_round_trips_and_says_every_field() {
+    let check: QrisCheck = round_trip("qris_check.json", QRIS_CHECK);
+    assert_eq!(
+        check,
+        serde_json::from_str::<QrisCheck>(QRIS_CHECK).unwrap(),
+        "decodes the same twice"
+    );
+
+    // The invoice: an expired one the check started watching.
+    let invoice = &check.invoice;
+    assert_eq!(invoice.id, "qri_01M67Z7W1BDKHPGWCSQPA5Q8Y4");
+    assert_eq!(invoice.reference, "pay_01M67Z6QZ4R2K8N5T7V9X1B3D5");
+    assert_eq!(invoice.customer_ref, "usr_acc_7f3a");
+    assert_eq!(invoice.provider, QrisProvider::Gopay);
+    assert_eq!(invoice.status, QrisInvoiceStatus::Expired);
+    assert_eq!(invoice.base_amount, 197_010);
+    assert_eq!(invoice.unique_code, 0);
+    assert_eq!(invoice.unique_code_mode, UniqueCodeMode::Subtract);
+    assert_eq!(invoice.amount_due, 197_010);
+    assert_eq!(
+        invoice.amount_due,
+        invoice.base_amount - i64::from(invoice.unique_code)
+    );
+    assert_eq!(invoice.created_at, 1_793_416_491);
+    assert_eq!(invoice.expires_at, 1_793_417_391);
+    assert_eq!(invoice.match_until, 1_793_420_991);
+    assert_eq!(invoice.watch_until, Some(1_793_516_520));
+    assert!(invoice.created_at < invoice.expires_at && invoice.expires_at < invoice.match_until);
+    // The watch runs past the late window, and never past the invoice's third day.
+    assert!(invoice.match_until < invoice.watch_until.unwrap());
+    assert!(invoice.watch_until.unwrap() <= invoice.created_at + 3 * 86_400);
+    assert_eq!(
+        (
+            &invoice.paid_at,
+            &invoice.paid_amount,
+            &invoice.payer_issuer,
+            &invoice.matched_by
+        ),
+        (&None, &None, &None, &None)
+    );
+    assert!(invoice.repeat_payments.is_empty());
+    assert_eq!(invoice.seq, 4211);
+    assert!(invoice.livemode);
+    assert!(!invoice.paid_exactly());
+    assert_dynamic_qris_of(invoice);
+
+    // The verdict, the payment, the watch and the read.
+    assert_eq!(check.verdict, QrisCheckVerdict::NotFound);
+    assert_eq!(check.payment, None);
+    assert_eq!(check.watch, QrisWatch::Started);
+    assert!(check.read.fresh);
+    assert_eq!(check.read.read_at, Some(1_793_430_120));
+    assert_eq!(check.read.covered_until, Some(1_793_430_120));
+    assert!(!check.read.feed_failing);
+    // The read ran after the invoice's window closed, and inside the watch.
+    assert!(invoice.match_until < check.read.read_at.unwrap());
+    assert!(check.read.read_at.unwrap() <= invoice.watch_until.unwrap());
+
+    // A paid verdict carries the feed row, and it round trips with every field.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_CHECK).unwrap();
+    value["verdict"] = "paid".into();
+    value["watch"] = "not_needed".into();
+    value["payment"] = serde_json::json!({
+        "feed_tx_id": "A120251031093000abc",
+        "amount": 197_010,
+        "issuer": "DANA",
+        "status": "settlement",
+        "transaction_time": 1_793_425_000,
+    });
+    let paid: QrisCheck = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(paid.verdict, QrisCheckVerdict::Paid);
+    assert_eq!(paid.watch, QrisWatch::NotNeeded);
+    assert_eq!(
+        paid.payment,
+        Some(QrisCheckPayment {
+            feed_tx_id: "A120251031093000abc".into(),
+            amount: 197_010,
+            issuer: Some("DANA".into()),
+            status: "settlement".into(),
+            transaction_time: 1_793_425_000,
+        })
+    );
+    assert_eq!(serde_json::to_value(&paid).unwrap(), value);
+    // An issuer the feed does not name is null.
+    value["payment"]["issuer"] = serde_json::Value::Null;
+    let paid: QrisCheck = serde_json::from_value(value).unwrap();
+    assert_eq!(paid.payment.unwrap().issuer, None);
+
+    // A read that never ran gives nulls.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_CHECK).unwrap();
+    value["verdict"] = "cannot_read".into();
+    value["read"] = serde_json::json!({
+        "fresh": false, "read_at": null, "covered_until": null, "feed_failing": true
+    });
+    let unread: QrisCheck = serde_json::from_value(value).unwrap();
+    assert_eq!(unread.verdict, QrisCheckVerdict::CannotRead);
+    assert_eq!(
+        (
+            unread.read.fresh,
+            unread.read.read_at,
+            unread.read.covered_until,
+            unread.read.feed_failing
+        ),
+        (false, None, None, true)
+    );
+
+    // A verdict or a watch this SDK does not know decodes as `Unknown`, and a field it does not
+    // know is ignored.
+    let mut value: serde_json::Value = serde_json::from_str(QRIS_CHECK).unwrap();
+    value["verdict"] = "pending".into();
+    value["watch"] = "paused".into();
+    value["added_by_a_newer_gateway"] = serde_json::json!({"a": 1});
+    value["read"]["also_new"] = true.into();
+    let newer: QrisCheck = serde_json::from_value(value).unwrap();
+    assert_eq!(newer.verdict, QrisCheckVerdict::Unknown);
+    assert_eq!(newer.watch, QrisWatch::Unknown);
+    assert_eq!(newer.invoice, check.invoice);
+
+    // The parts the wire always carries are required.
+    for required in ["invoice", "verdict", "watch", "read"] {
+        let mut value: serde_json::Value = serde_json::from_str(QRIS_CHECK).unwrap();
+        value.as_object_mut().unwrap().remove(required);
+        assert!(
+            serde_json::from_value::<QrisCheck>(value).is_err(),
+            "{required} is required"
+        );
+    }
+    for required in ["fresh", "feed_failing"] {
+        let mut value: serde_json::Value = serde_json::from_str(QRIS_CHECK).unwrap();
+        value["read"].as_object_mut().unwrap().remove(required);
+        assert!(
+            serde_json::from_value::<QrisCheck>(value).is_err(),
+            "read.{required} is required"
+        );
+    }
 }
 
 #[test]

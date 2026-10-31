@@ -12,7 +12,8 @@ use std::time::Duration;
 use kenari_pay_sdk::api::ApiError;
 use kenari_pay_sdk::client::{default_http, Client, ClientError, CONNECT_TIMEOUT, TOTAL_TIMEOUT};
 use kenari_pay_sdk::wire::{
-    AlipayInvoiceStatus, CreateAlipayInvoice, CreateQrisInvoice, Family, QrisInvoiceStatus,
+    AlipayInvoiceStatus, CreateAlipayInvoice, CreateQrisInvoice, Family, QrisCheck,
+    QrisCheckVerdict, QrisInvoiceStatus, QrisWatch,
 };
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
@@ -348,6 +349,69 @@ async fn a_404_on_an_alipay_invoice_is_none_and_the_refusals_keep_their_codes() 
 }
 
 #[tokio::test]
+async fn a_payment_check_posts_no_body_and_decodes_the_check_and_its_refusals() {
+    let check = include_str!("../vectors/qris_check.json");
+    let not_on =
+        r#"{"error":{"code":"invalid_request","message":"Payment checks are not turned on"}}"#;
+    let (base, server) = serve(vec![
+        reply(200, check),
+        reply(409, not_on),
+        reply(
+            404,
+            r#"{"error":{"code":"not_found","message":"no such invoice"}}"#,
+        ),
+    ]);
+    let client = Client::new(&base, KEY).unwrap();
+    let reference = "pay_01M67Z6QZ4R2K8N5T7V9X1B3D5";
+    let answer = client.check_qris_invoice(reference).await.unwrap();
+    let want: QrisCheck = serde_json::from_str(check).unwrap();
+    assert_eq!(answer, want);
+    assert_eq!(answer.verdict, QrisCheckVerdict::NotFound);
+    assert_eq!(answer.watch, QrisWatch::Started);
+    assert_eq!(answer.invoice.reference, reference);
+    assert_eq!(answer.invoice.watch_until, Some(1_793_516_520));
+    // While payment checks are off the gateway refuses with a 409, kept with its code.
+    let error = client.check_qris_invoice("qri_off").await.unwrap_err();
+    assert_eq!(
+        error,
+        ClientError::Api(ApiError::Status {
+            code: 409,
+            error_code: Some("invalid_request".into())
+        })
+    );
+    assert_eq!(error.to_string(), "gateway answered 409");
+    // Another merchant's invoice is an error here, not `None`.
+    let error = client.check_qris_invoice("qri/../x").await.unwrap_err();
+    assert_eq!(
+        error,
+        ClientError::Api(ApiError::Status {
+            code: 404,
+            error_code: Some("not_found".into())
+        })
+    );
+    let seen = server.join().unwrap();
+    let request_lines: Vec<String> = seen.iter().map(|r| head_lines(r)[0].clone()).collect();
+    assert_eq!(
+        request_lines,
+        [
+            "post /v1/qris/invoices/pay_01m67z6qz4r2k8n5t7v9x1b3d5/check http/1.1",
+            "post /v1/qris/invoices/qri_off/check http/1.1",
+            "post /v1/qris/invoices/qri%2f..%2fx/check http/1.1",
+        ]
+    );
+    for request in &seen {
+        let lines = head_lines(request);
+        assert!(lines.contains(&format!(
+            "authorization: bearer {}",
+            KEY.to_ascii_lowercase()
+        )));
+        // No body, so no content type.
+        assert!(!lines.iter().any(|l| l.starts_with("content-type:")));
+        assert_eq!(request.split("\r\n\r\n").nth(1).unwrap(), "");
+    }
+}
+
+#[tokio::test]
 async fn an_error_answer_is_a_status_with_the_code_and_a_fixed_text() {
     let (base, server) = serve(vec![
         reply(503, include_str!("../vectors/error_pool_exhausted.json")),
@@ -444,6 +508,7 @@ async fn a_dot_segment_is_refused_before_anything_is_sent() {
         assert_eq!(client.qris_invoice(value).await.unwrap_err(), want);
         assert_eq!(client.alipay_invoice(value).await.unwrap_err(), want);
         assert_eq!(client.cancel_alipay_invoice(value).await.unwrap_err(), want);
+        assert_eq!(client.check_qris_invoice(value).await.unwrap_err(), want);
     }
     assert_eq!(
         want.to_string(),

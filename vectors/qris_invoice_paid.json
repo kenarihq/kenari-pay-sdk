@@ -12,6 +12,7 @@
   "created_at": 1760700000,
   "expires_at": 1760700900,
   "match_until": 1760704500,
+  "watch_until": null,
   "paid_at": 1760700400,
   "paid_amount": 50123,
   "payer_issuer": "DANA",
