@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-10-31)
 
 The QRIS payment check: for a customer who says they paid, the merchant asks the gateway to look
 for the payment now and to keep watching the invoice for a day.
