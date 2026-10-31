@@ -419,6 +419,37 @@ impl Api {
         ))
     }
 
+    /// `POST /v1/qris/invoices/{id_or_reference}/check`: a payment check of one invoice, for a
+    /// customer who says they paid. No body. Decode with [`QrisCheck`](crate::wire::QrisCheck).
+    ///
+    /// For an invoice that is not paid the gateway starts or extends a watch of about 24 hours
+    /// ([`QrisWatch`](crate::wire::QrisWatch), until
+    /// [`QrisInvoice::watch_until`](crate::wire::QrisInvoice::watch_until)), so a payment of
+    /// exactly `amount_due` that lands later still pays it, and the merchant hears
+    /// `qris_invoice.paid`. It then does a fresh read of the merchant's GoPay feed for the invoice
+    /// and waits for it up to about 15 s, so the answer comes within about 15 s. A read not done by
+    /// then answers how far it got ([`QrisCheckRead`](crate::wire::QrisCheckRead)). A second check
+    /// within a minute of a read answers that read again. A check can pay the invoice, and never
+    /// chooses where money goes. Credit by the invoice and its webhook as always.
+    ///
+    /// Send it with a total timeout above 15 s. The `reqwest` feature's `client::TOTAL_TIMEOUT` is
+    /// 20 s, so its default `Client` needs no change.
+    ///
+    /// The refusals to expect: `409` (code `invalid_request`) while payment checks are off at the
+    /// gateway, which is how they start, and `404 not_found` for an invoice that is not the
+    /// merchant's (a refusal, not an answer for [`Api::decode_optional`]).
+    ///
+    /// # Errors
+    ///
+    /// [`ApiError::Argument`] when `id_or_reference` is empty, `.` or `..`.
+    pub fn check_qris_invoice(&self, id_or_reference: &str) -> Result<HttpRequest, ApiError> {
+        let path = format!(
+            "/v1/qris/invoices/{}/check",
+            encode_path_segment(id_or_reference)?
+        );
+        Ok(self.post(&path, None))
+    }
+
     /// `GET /v1/alipay/packs`: the Alipay points packs on sale now. Decode with
     /// [`AlipayPacks`](crate::wire::AlipayPacks). `available` is false, with no packs, when Alipay
     /// is not open to the merchant right now.

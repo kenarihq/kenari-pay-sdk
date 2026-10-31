@@ -4,8 +4,8 @@ use kenari_pay_sdk::api::{Api, ApiError, HttpRequest, Method};
 use kenari_pay_sdk::wire::{
     Address, AlipayInvoice, AlipayInvoiceStatus, AlipayInvoicesPage, AlipayPacks,
     CreateAlipayInvoice, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key,
-    Keys, Networks, PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, QrisProvider,
-    SweepsPage, UniqueCodeMode,
+    Keys, Networks, PoolFile, PoolImported, QrisCheck, QrisCheckVerdict, QrisInvoice,
+    QrisInvoicesPage, QrisProvider, QrisWatch, SweepsPage, UniqueCodeMode,
 };
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
@@ -241,6 +241,35 @@ fn an_alipay_cancel_is_a_post_with_no_body_and_so_no_content_type() {
 }
 
 #[test]
+fn a_qris_check_is_a_post_with_no_body_and_so_no_content_type() {
+    for (value, segment) in [
+        (
+            "qri_01M67Z7W1BDKHPGWCSQPA5Q8Y4",
+            "qri_01M67Z7W1BDKHPGWCSQPA5Q8Y4",
+        ),
+        (
+            "pay_01M67Z6QZ4R2K8N5T7V9X1B3D5",
+            "pay_01M67Z6QZ4R2K8N5T7V9X1B3D5",
+        ),
+        // A reference is the merchant's own text: a slash, a query, a space, a hash and non
+        // ASCII all stay inside the one segment.
+        (
+            "pay/1?x=../check #\u{e9}",
+            "pay%2F1%3Fx%3D..%2Fcheck%20%23%C3%A9",
+        ),
+    ] {
+        let request = api().check_qris_invoice(value).unwrap();
+        assert_eq!(request.method, Method::Post);
+        assert_eq!(
+            request.url,
+            format!("{BASE}/v1/qris/invoices/{segment}/check")
+        );
+        assert_eq!(request.headers, vec![bearer()]);
+        assert_eq!(request.body, None);
+    }
+}
+
+#[test]
 fn a_reissue_is_a_post_with_no_body_and_so_no_content_type() {
     let request = api().reissue("adr_01JAXEZ7Q4K2M8N5P1R3T6V9WB").unwrap();
     assert_eq!(request.method, Method::Post);
@@ -314,6 +343,11 @@ fn a_dot_segment_is_refused_by_every_call_that_takes_a_path_value() {
             Err(ApiError::Argument),
             "cancel_alipay_invoice {value:?}"
         );
+        assert_eq!(
+            api().check_qris_invoice(value),
+            Err(ApiError::Argument),
+            "check_qris_invoice {value:?}"
+        );
     }
     // The refusal is fixed text and holds no value.
     assert_eq!(
@@ -353,6 +387,11 @@ fn a_value_that_looks_encoded_stays_one_encoded_segment() {
     assert_eq!(
         request.url,
         format!("{BASE}/v1/alipay/invoices/%252e%252e/cancel")
+    );
+    let request = api().check_qris_invoice("%2e%2e").unwrap();
+    assert_eq!(
+        request.url,
+        format!("{BASE}/v1/qris/invoices/%252e%252e/check")
     );
     // A value with a slash is one segment, never two.
     let request = api().customer_deposits("a/b", 10).unwrap();
@@ -546,6 +585,9 @@ fn every_example_decodes_through_the_call_that_returns_it() {
         (page.invoices.len(), page.next_seq, page.has_more),
         (2, 43, false)
     );
+    let check: QrisCheck = Api::decode(200, include_bytes!("../vectors/qris_check.json")).unwrap();
+    assert_eq!(check.verdict, QrisCheckVerdict::NotFound);
+    assert_eq!(check.watch, QrisWatch::Started);
     let packs: AlipayPacks =
         Api::decode(200, include_bytes!("../vectors/alipay_packs.json")).unwrap();
     assert!(packs.available);
@@ -703,6 +745,23 @@ fn every_qris_refusal_the_docs_name_keeps_its_code() {
         let body = serde_json::json!({"error": {"code": code, "message": "m"}}).to_string();
         assert_eq!(
             Api::decode::<QrisInvoice>(status, body.as_bytes()),
+            Err(ApiError::Status {
+                code: status,
+                error_code: Some(code.into())
+            }),
+            "{code}"
+        );
+    }
+}
+
+#[test]
+fn every_qris_check_refusal_the_docs_name_keeps_its_code() {
+    // Payment checks off at the gateway (a 409 that keeps the code `invalid_request`), and an
+    // invoice that is not the merchant's, which is a refusal and not `None`.
+    for (status, code) in [(409, "invalid_request"), (404, "not_found")] {
+        let body = serde_json::json!({"error": {"code": code, "message": "m"}}).to_string();
+        assert_eq!(
+            Api::decode::<QrisCheck>(status, body.as_bytes()),
             Err(ApiError::Status {
                 code: status,
                 error_code: Some(code.into())

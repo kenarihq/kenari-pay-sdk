@@ -629,6 +629,13 @@ pub struct QrisInvoice {
     pub expires_at: i64,
     /// Until when a late payment of `amount_due` is still matched to this invoice, in unix seconds.
     pub match_until: i64,
+    /// Until when a payment check ([`crate::api::Api::check_qris_invoice`]) watches the invoice, in
+    /// unix seconds. Until then a payment of exactly `amount_due` that lands after `match_until`
+    /// still pays it, when no other invoice of the amount could take it. On a paid invoice it is
+    /// how long its amount stays held after a late payment. `None` when the invoice was never
+    /// watched, and when an older gateway leaves it out.
+    #[serde(default)]
+    pub watch_until: Option<i64>,
     /// When it was paid, null until then.
     pub paid_at: Option<i64>,
     /// What was paid, in rupiah, null until then.
@@ -693,6 +700,128 @@ pub struct QrisInvoicesPage {
     pub next_seq: i64,
     /// Whether more follow.
     pub has_more: bool,
+}
+
+/// What a payment check found, [`QrisCheck::verdict`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QrisCheckVerdict {
+    /// The invoice is paid. [`QrisCheck::payment`] is the feed row that paid it, null when an
+    /// operator assigned the payment. Credit by the invoice and its `qris_invoice.paid` webhook as
+    /// always, after [`QrisInvoice::paid_exactly`].
+    Paid,
+    /// A settlement or a refund of this amount the gateway could not give the invoice by itself, or
+    /// an invoice whose window the operator closed. The operator decides, so tell the customer it is
+    /// being looked at.
+    NeedsOperator,
+    /// The gateway could not read the account's feed: the account is not active, its session is
+    /// gone, its feed is failing, or the check's read failed.
+    CannotRead,
+    /// No payment of this amount in what was read. The bank or wallet may still show it as being
+    /// processed, and a watched invoice is still paid by a payment that lands later.
+    NotFound,
+    /// A verdict this SDK does not know. Never credit on it, hold the invoice for a person.
+    #[serde(other)]
+    Unknown,
+}
+
+impl QrisCheckVerdict {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QrisCheckVerdict::Paid => "paid",
+            QrisCheckVerdict::NeedsOperator => "needs_operator",
+            QrisCheckVerdict::CannotRead => "cannot_read",
+            QrisCheckVerdict::NotFound => "not_found",
+            QrisCheckVerdict::Unknown => "unknown",
+        }
+    }
+}
+
+/// What a payment check did with the invoice's watch, [`QrisCheck::watch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QrisWatch {
+    /// The invoice is watched now, until [`QrisInvoice::watch_until`]. A payment that lands by
+    /// then pays it by itself, and the merchant hears `qris_invoice.paid`.
+    Started,
+    /// It was watched already, and the watch now runs until [`QrisInvoice::watch_until`].
+    Extended,
+    /// Too many invoices of the account are watched now, so this one is not.
+    Full,
+    /// The invoice is older than the gateway watches (made more than three days ago).
+    TooOld,
+    /// The invoice is paid.
+    NotNeeded,
+    /// A watch outcome this SDK does not know. Read [`QrisInvoice::watch_until`] for the watch.
+    #[serde(other)]
+    Unknown,
+}
+
+impl QrisWatch {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QrisWatch::Started => "started",
+            QrisWatch::Extended => "extended",
+            QrisWatch::Full => "full",
+            QrisWatch::TooOld => "too_old",
+            QrisWatch::NotNeeded => "not_needed",
+            QrisWatch::Unknown => "unknown",
+        }
+    }
+}
+
+/// The feed row that paid the invoice, [`QrisCheck::payment`]. It never holds a phone number, a
+/// token or anything else of the merchant's session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisCheckPayment {
+    /// The feed's transaction id, unique per payment.
+    pub feed_tx_id: String,
+    /// What was paid, in rupiah.
+    pub amount: i64,
+    /// The payer's QRIS issuer when the feed names it.
+    pub issuer: Option<String>,
+    /// The feed's status, `settlement` or `capture`. Kept as the feed's text, for a log or a
+    /// person.
+    pub status: String,
+    /// When the payer paid (the feed's time), in unix seconds.
+    pub transaction_time: i64,
+}
+
+/// Where the answer of a payment check comes from, [`QrisCheck::read`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisCheckRead {
+    /// `true` when the answer comes from a read this check asked for, or one at most a minute old.
+    pub fresh: bool,
+    /// When that read ran, or the last read of the invoice when `fresh` is false, in unix seconds.
+    /// Null when the feed was never read for the invoice.
+    pub read_at: Option<i64>,
+    /// How far the reads have reached for this invoice, in unix seconds: the feed is read from the
+    /// start of its window up to here. Null when nothing was read yet.
+    pub covered_until: Option<i64>,
+    /// Whether the account's feed reads are failing now.
+    pub feed_failing: bool,
+}
+
+/// The answer of `POST /v1/qris/invoices/{id_or_reference}/check`, a payment check of one invoice.
+///
+/// A check can pay the invoice, but it never chooses where money goes: it only applies the
+/// gateway's matcher. Credit by [`QrisCheck::invoice`] and the `qris_invoice.paid` webhook as for
+/// any invoice, never by the verdict alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisCheck {
+    /// The invoice after the check, with [`QrisInvoice::watch_until`] set while it is watched.
+    pub invoice: QrisInvoice,
+    /// What the check found.
+    pub verdict: QrisCheckVerdict,
+    /// The feed row that paid the invoice, on a `paid` verdict. Null otherwise, and null when an
+    /// operator assigned the payment.
+    pub payment: Option<QrisCheckPayment>,
+    /// What the check did with the invoice's watch.
+    pub watch: QrisWatch,
+    /// Where the answer comes from.
+    pub read: QrisCheckRead,
 }
 
 /// A points pack on sale through Alipay, an entry of [`AlipayPacks::packs`] and the
@@ -1146,6 +1275,12 @@ mod tests {
         assert_eq!(event, EventType::Unknown);
         let alipay: AlipayInvoiceStatus = serde_json::from_str("\"draining\"").unwrap();
         assert_eq!(alipay, AlipayInvoiceStatus::Unknown);
+        let verdict: QrisCheckVerdict = serde_json::from_str("\"pending\"").unwrap();
+        assert_eq!(verdict, QrisCheckVerdict::Unknown);
+        let watch: QrisWatch = serde_json::from_str("\"paused\"").unwrap();
+        assert_eq!(watch, QrisWatch::Unknown);
+        assert!(serde_json::from_str::<QrisCheckVerdict>("1").is_err());
+        assert!(serde_json::from_str::<QrisWatch>("null").is_err());
         assert!(serde_json::from_str::<AlipayInvoiceStatus>("1").is_err());
         assert!(serde_json::from_str::<QrisInvoiceStatus>("1").is_err());
         // A value that is not text is still an error, not an `Unknown`.
@@ -1180,6 +1315,21 @@ mod tests {
         // And it is written back as an empty list, never left out.
         let back = serde_json::to_value(&invoice).unwrap();
         assert_eq!(back["repeat_payments"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn an_invoice_without_watch_until_reads_none() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(include_str!("../vectors/qris_invoice_paid.json")).unwrap();
+        assert_eq!(value["watch_until"], serde_json::Value::Null);
+        let invoice: QrisInvoice = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(invoice.watch_until, None);
+        value.as_object_mut().unwrap().remove("watch_until");
+        let invoice: QrisInvoice = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(invoice.watch_until, None);
+        value["watch_until"] = serde_json::json!(1_760_790_000);
+        let invoice: QrisInvoice = serde_json::from_value(value).unwrap();
+        assert_eq!(invoice.watch_until, Some(1_760_790_000));
     }
 
     #[test]
@@ -1347,6 +1497,32 @@ mod tests {
             );
             assert_eq!(serde_json::to_string(&provider).unwrap(), json);
             assert_eq!(provider.as_str(), word);
+        }
+        for (word, verdict) in [
+            ("paid", QrisCheckVerdict::Paid),
+            ("needs_operator", QrisCheckVerdict::NeedsOperator),
+            ("cannot_read", QrisCheckVerdict::CannotRead),
+            ("not_found", QrisCheckVerdict::NotFound),
+        ] {
+            let json = format!("\"{word}\"");
+            assert_eq!(
+                serde_json::from_str::<QrisCheckVerdict>(&json).unwrap(),
+                verdict
+            );
+            assert_eq!(serde_json::to_string(&verdict).unwrap(), json);
+            assert_eq!(verdict.as_str(), word);
+        }
+        for (word, watch) in [
+            ("started", QrisWatch::Started),
+            ("extended", QrisWatch::Extended),
+            ("full", QrisWatch::Full),
+            ("too_old", QrisWatch::TooOld),
+            ("not_needed", QrisWatch::NotNeeded),
+        ] {
+            let json = format!("\"{word}\"");
+            assert_eq!(serde_json::from_str::<QrisWatch>(&json).unwrap(), watch);
+            assert_eq!(serde_json::to_string(&watch).unwrap(), json);
+            assert_eq!(watch.as_str(), word);
         }
         assert_eq!(Family::Evm.as_str(), "evm");
         assert_eq!(Family::Solana.as_str(), "solana");

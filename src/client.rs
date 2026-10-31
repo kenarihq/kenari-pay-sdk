@@ -29,7 +29,7 @@ use crate::api::{Api, ApiError, HttpRequest, Method};
 use crate::wire::{
     Address, AlipayInvoice, AlipayInvoicesPage, AlipayPacks, CreateAlipayInvoice,
     CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys, Networks,
-    PoolFile, PoolImported, QrisInvoice, QrisInvoicesPage, SweepsPage,
+    PoolFile, PoolImported, QrisCheck, QrisInvoice, QrisInvoicesPage, SweepsPage,
 };
 
 /// How long the default client waits to connect.
@@ -239,6 +239,24 @@ impl Client {
         limit: u32,
     ) -> Result<QrisInvoicesPage, ClientError> {
         self.call(self.api.qris_invoices(after_seq, limit)).await
+    }
+
+    /// `POST /v1/qris/invoices/{id_or_reference}/check`: a payment check of one invoice, for a
+    /// customer who says they paid. The gateway starts or extends a 24 hour watch of the invoice,
+    /// does a fresh read of the merchant's GoPay feed and answers within about 15 s, inside
+    /// [`TOTAL_TIMEOUT`] (20 s), so the default client needs no change. A client of your own passed
+    /// to [`Client::with_http`] needs a total timeout above 15 s.
+    ///
+    /// The gateway answers `409` (code `invalid_request`) while payment checks are off, which is
+    /// how they start, and a 404 is an error here, not `None`. An empty, `.` or `..` value is
+    /// refused before anything is sent, as [`ApiError::Argument`] in [`ClientError::Api`]. See
+    /// [`Api::check_qris_invoice`].
+    pub async fn check_qris_invoice(
+        &self,
+        id_or_reference: &str,
+    ) -> Result<QrisCheck, ClientError> {
+        self.call(self.api.check_qris_invoice(id_or_reference)?)
+            .await
     }
 
     /// `GET /v1/alipay/packs`.

@@ -1,0 +1,34 @@
+{
+  "invoice": {
+    "id": "qri_01M67Z7W1BDKHPGWCSQPA5Q8Y4",
+    "reference": "pay_01M67Z6QZ4R2K8N5T7V9X1B3D5",
+    "customer_ref": "usr_acc_7f3a",
+    "provider": "gopay",
+    "status": "expired",
+    "base_amount": 197010,
+    "unique_code": 0,
+    "unique_code_mode": "subtract",
+    "amount_due": 197010,
+    "qris": "00020101021226660014ID.CO.QRIS.WWW01189360091400000000010215ID10290000000010303UMI52045734530336054061970105802ID5914KENARI SANDBOX6007JAKARTA61051011063046638",
+    "created_at": 1793416491,
+    "expires_at": 1793417391,
+    "match_until": 1793420991,
+    "watch_until": 1793516520,
+    "paid_at": null,
+    "paid_amount": null,
+    "payer_issuer": null,
+    "matched_by": null,
+    "repeat_payments": [],
+    "seq": 4211,
+    "livemode": true
+  },
+  "verdict": "not_found",
+  "payment": null,
+  "watch": "started",
+  "read": {
+    "fresh": true,
+    "read_at": 1793430120,
+    "covered_until": 1793430120,
+    "feed_failing": false
+  }
+}
