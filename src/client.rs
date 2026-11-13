@@ -29,7 +29,7 @@ use crate::api::{Api, ApiError, HttpRequest, Method};
 use crate::wire::{
     Address, AlipayInvoice, AlipayInvoicesPage, AlipayPacks, CreateAlipayInvoice,
     CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key, Keys, Networks,
-    PoolFile, PoolImported, QrisCheck, QrisInvoice, QrisInvoicesPage, SweepsPage,
+    PoolFile, PoolImported, QrisCheck, QrisInvoice, QrisInvoicesPage, Subscription, SweepsPage,
 };
 
 /// How long the default client waits to connect.
@@ -64,6 +64,14 @@ impl std::error::Error for ClientError {
             ClientError::Api(error) => Some(error),
             ClientError::Transport(_) => None,
         }
+    }
+}
+
+impl ClientError {
+    /// Whether the gateway answered `402 subscription_inactive`
+    /// ([`ApiError::is_subscription_inactive`]).
+    pub fn is_subscription_inactive(&self) -> bool {
+        matches!(self, ClientError::Api(e) if e.is_subscription_inactive())
     }
 }
 
@@ -257,6 +265,13 @@ impl Client {
     ) -> Result<QrisCheck, ClientError> {
         self.call(self.api.check_qris_invoice(id_or_reference)?)
             .await
+    }
+
+    /// `GET /v1/subscription`, with a 404 (a merchant with no subscription) as `Ok(None)`. Read it
+    /// again on every `subscription.*` webhook. See [`Api::subscription`].
+    pub async fn get_subscription(&self) -> Result<Option<Subscription>, ClientError> {
+        let (status, body) = self.send(self.api.subscription()).await?;
+        Ok(Api::decode_optional(status, &body)?)
     }
 
     /// `GET /v1/alipay/packs`.

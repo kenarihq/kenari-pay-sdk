@@ -75,10 +75,11 @@ impl std::error::Error for WebhookError {}
 /// when it holds, so nothing in an unsigned body is parsed.
 ///
 /// An event type this SDK does not know is [`EventType::Unknown`](crate::wire::EventType::Unknown)
-/// with no `deposit`, no `qris_invoice` and no `alipay_invoice`, and still a success whatever its
-/// `data` holds, so answer 2xx and ignore it. A `deposit.*` event whose `data` is not
-/// `deposit_id`, `key` and `seq`, or a `qris_invoice.*` or `alipay_invoice.*` event whose `data` is
-/// not `invoice_id`, `reference` and `seq`, is [`WebhookError::Body`].
+/// with no `deposit`, no `qris_invoice`, no `alipay_invoice` and no `subscription`, and still a
+/// success whatever its `data` holds, so answer 2xx and ignore it. A `deposit.*` event whose `data`
+/// is not `deposit_id`, `key` and `seq`, a `qris_invoice.*` or `alipay_invoice.*` event whose `data`
+/// is not `invoice_id`, `reference` and `seq`, or a `subscription.*` event whose `data` is not
+/// `subscription_id` and `seq`, is [`WebhookError::Body`].
 pub fn verify(
     signature_header: &str,
     raw_body: &[u8],

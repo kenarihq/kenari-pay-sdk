@@ -118,6 +118,23 @@ pub enum ApiError {
     BaseUrl,
 }
 
+/// The `error.code` of the `402` a new QRIS invoice gets when the merchant's Kenari Pay
+/// subscription does not entitle it now. See [`Api::subscription`].
+pub const SUBSCRIPTION_INACTIVE: &str = "subscription_inactive";
+
+impl ApiError {
+    /// Whether this is the gateway's `402 subscription_inactive`: a new QRIS invoice refused because
+    /// the merchant's Kenari Pay subscription is not active. The same reference again still answers
+    /// the invoice already made, and invoices already made are still matched. Read
+    /// [`Api::subscription`] and ask the merchant's owner to renew in the portal.
+    pub fn is_subscription_inactive(&self) -> bool {
+        matches!(
+            self,
+            ApiError::Status { code: 402, error_code: Some(c) } if c == SUBSCRIPTION_INACTIVE
+        )
+    }
+}
+
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -387,7 +404,9 @@ impl Api {
     /// the operator enabled QRIS for. Decode with [`QrisInvoice`](crate::wire::QrisInvoice):
     /// `201` for a new invoice, `200` for the one already made with the same `reference`.
     ///
-    /// The refusals to expect: `403 forbidden` when QRIS is not enabled for the merchant, `503
+    /// The refusals to expect: `403 forbidden` when QRIS is not enabled for the merchant, `402
+    /// subscription_inactive` for a new reference when the merchant's Kenari Pay subscription does
+    /// not entitle it now ([`ApiError::is_subscription_inactive`], see [`Api::subscription`]), `503
     /// unavailable` when the gateway cannot watch for the payment right now or every unique code
     /// of the amount is taken (try again in a minute), and `429 rate_limited` above the daily cap,
     /// with `Retry-After`. Show the customer another way to pay, never the gateway's message.
@@ -448,6 +467,14 @@ impl Api {
             encode_path_segment(id_or_reference)?
         );
         Ok(self.post(&path, None))
+    }
+
+    /// `GET /v1/subscription`: the merchant's Kenari Pay for GoPay subscription, the re-fetch to do
+    /// on every `subscription.*` webhook. Decode with [`Api::decode_optional`] for a
+    /// [`Subscription`](crate::wire::Subscription), because a 404 means the merchant has none (the
+    /// operator's own merchant). `entitled` says whether a new invoice is accepted now.
+    pub fn subscription(&self) -> HttpRequest {
+        self.get("/v1/subscription")
     }
 
     /// `GET /v1/alipay/packs`: the Alipay points packs on sale now. Decode with
@@ -534,8 +561,8 @@ impl Api {
         serde_json::from_slice(body).map_err(|e| ApiError::Decode(e.to_string()))
     }
 
-    /// Like [`Api::decode`], with a 404 as `Ok(None)`: for [`Api::deposit`], [`Api::qris_invoice`]
-    /// and [`Api::alipay_invoice`], where the gateway saying there is no such object is an answer and
+    /// Like [`Api::decode`], with a 404 as `Ok(None)`: for [`Api::deposit`], [`Api::qris_invoice`],
+    /// [`Api::alipay_invoice`] and [`Api::subscription`], where the gateway saying there is no such object is an answer and
     /// not a failure.
     ///
     /// Any 404 counts, including one from a proxy in front of the gateway. A merchant that is not
