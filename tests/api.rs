@@ -33,6 +33,7 @@ fn body_json(request: &HttpRequest) -> serde_json::Value {
 fn a_read_is_a_get_with_the_key_and_no_body() {
     let calls = [
         (api().networks(), "/v1/networks"),
+        (api().subscription(), "/v1/subscription"),
         (api().keys(), "/v1/keys"),
         (
             api().deposit("dep_01JAXF2Q8N3M6P9R1T4V7X0Z2B").unwrap(),

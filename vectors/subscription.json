@@ -1,0 +1,12 @@
+{
+  "id": "sub_01M6A1Z4Q8R2T5V7X9B3D6F8H0",
+  "status": "active",
+  "price_idr": 199000,
+  "trial_ends_at": 1793000000,
+  "current_period_start": 1793000000,
+  "current_period_end": 1795592000,
+  "grace_ends_at": 1796196800,
+  "entitled": true,
+  "seq": 4,
+  "livemode": true
+}

@@ -303,6 +303,36 @@ async fn a_404_on_a_qris_invoice_is_none_and_a_503_keeps_its_code() {
 }
 
 #[tokio::test]
+async fn a_subscription_is_read_a_404_is_none_and_a_402_is_named() {
+    let (base, server) = serve(vec![
+        reply(200, include_str!("../vectors/subscription.json")),
+        reply(
+            404,
+            r#"{"error":{"code":"not_found","message":"subscription not found"}}"#,
+        ),
+        reply(
+            402,
+            include_str!("../vectors/error_subscription_inactive.json"),
+        ),
+    ]);
+    let client = Client::new(&base, KEY).unwrap();
+    let sub = client.get_subscription().await.unwrap().unwrap();
+    assert!(sub.entitled);
+    assert_eq!(client.get_subscription().await.unwrap(), None);
+    let invoice = CreateQrisInvoice::new("pay_1", "usr_1", 1000);
+    let error = client.create_qris_invoice(&invoice).await.unwrap_err();
+    assert!(error.is_subscription_inactive());
+    assert_eq!(error.to_string(), "gateway answered 402");
+    let seen = server.join().unwrap();
+    assert!(
+        seen[0].starts_with("GET /v1/subscription HTTP/1.1"),
+        "{}",
+        seen[0]
+    );
+    assert!(seen[1].starts_with("GET /v1/subscription HTTP/1.1"));
+}
+
+#[tokio::test]
 async fn a_404_on_an_alipay_invoice_is_none_and_the_refusals_keep_their_codes() {
     let conflict = r#"{"error":{"code":"conflict","message":"open invoice"}}"#;
     let (base, server) = serve(vec![

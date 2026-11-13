@@ -181,6 +181,10 @@ fn on_webhook(signature: &str, body: &[u8], secret: &str, now: i64) -> Result<()
         // And for an Alipay invoice.
         let _id = &invoice.invoice_id;
     }
+    if let Some(subscription) = &event.subscription {
+        // The merchant's Kenari Pay subscription changed: read `GET /v1/subscription` again.
+        let _id = &subscription.subscription_id;
+    }
     // All are `None` for an event type this SDK does not know. Ignore it and answer 2xx.
     Ok(()) // answer 2xx fast
 }
@@ -256,6 +260,10 @@ fn creditable(invoice: &QrisInvoice, live: bool) -> bool {
 - The refusals are `403 forbidden` (QRIS not enabled), `503 unavailable` (no account can take the
   payment right now, or every code of the amount is taken) and `429 rate_limited` (the daily cap).
   Offer the customer another way to pay.
+- A Kenari Pay for GoPay merchant also gets `402 subscription_inactive` for a new reference while its
+  subscription does not entitle it (`ApiError::is_subscription_inactive`). Invoices already made are
+  still matched. `api.subscription()` (`Client::get_subscription`) reads the subscription, with
+  `entitled` and the dates, and the `subscription.*` webhooks say when to read it again.
 - The feed `GET /v1/qris/invoices` follows the cursor rule above, with `Cursor::qris_invoices` and
   at most 100 invoices a page.
 

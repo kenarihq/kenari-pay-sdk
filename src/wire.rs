@@ -134,6 +134,21 @@ pub enum EventType {
     /// nothing drained.
     #[serde(rename = "alipay_invoice.expired")]
     AlipayInvoiceExpired,
+    /// `subscription.renewal_due`: the trial or the paid period of the merchant's Kenari Pay
+    /// subscription ends in 7, 3 or 1 days.
+    #[serde(rename = "subscription.renewal_due")]
+    SubscriptionRenewalDue,
+    /// `subscription.past_due`: the trial or the period ended unpaid. New invoices go on until the
+    /// grace ends.
+    #[serde(rename = "subscription.past_due")]
+    SubscriptionPastDue,
+    /// `subscription.lapsed`: new invoices are refused (`402 subscription_inactive`). Invoices
+    /// already made are still matched.
+    #[serde(rename = "subscription.lapsed")]
+    SubscriptionLapsed,
+    /// `subscription.active`: paid, new invoices are accepted again.
+    #[serde(rename = "subscription.active")]
+    SubscriptionActive,
     /// An event type this SDK does not know. Answer 2xx and ignore it.
     #[serde(other, rename = "unknown")]
     Unknown,
@@ -153,6 +168,10 @@ impl EventType {
             EventType::AlipayInvoicePaid => "alipay_invoice.paid",
             EventType::AlipayInvoiceDrained => "alipay_invoice.drained",
             EventType::AlipayInvoiceExpired => "alipay_invoice.expired",
+            EventType::SubscriptionRenewalDue => "subscription.renewal_due",
+            EventType::SubscriptionPastDue => "subscription.past_due",
+            EventType::SubscriptionLapsed => "subscription.lapsed",
+            EventType::SubscriptionActive => "subscription.active",
             EventType::Unknown => "unknown",
         }
     }
@@ -185,6 +204,18 @@ impl EventType {
             EventType::AlipayInvoicePaid
                 | EventType::AlipayInvoiceDrained
                 | EventType::AlipayInvoiceExpired
+        )
+    }
+
+    /// Whether the event is about the merchant's Kenari Pay subscription, so its `data` is a
+    /// [`SubscriptionRef`].
+    pub fn is_subscription(self) -> bool {
+        matches!(
+            self,
+            EventType::SubscriptionRenewalDue
+                | EventType::SubscriptionPastDue
+                | EventType::SubscriptionLapsed
+                | EventType::SubscriptionActive
         )
     }
 }
@@ -1047,13 +1078,97 @@ pub struct AlipayInvoiceRef {
     pub seq: i64,
 }
 
+/// The ids a subscription webhook carries. Like [`DepositRef`] it carries nothing else on purpose,
+/// so act on a re-fetch with `GET /v1/subscription` and never on the webhook.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubscriptionRef {
+    /// `sub_...`
+    pub subscription_id: String,
+    /// The subscription's version when the event was made. [`Subscription::seq`] is raised by
+    /// every change.
+    pub seq: i64,
+}
+
+/// Where a Kenari Pay for GoPay merchant's subscription is. For display: whether new invoices are
+/// accepted is [`Subscription::entitled`], which the gateway decides from the dates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionStatus {
+    /// No GoPay account is active yet.
+    Setup,
+    /// Past the launch ceiling, waiting for a place.
+    Waitlisted,
+    /// In the trial.
+    Trialing,
+    /// Paid.
+    Active,
+    /// The trial or the period ended unpaid, and the grace runs.
+    PastDue,
+    /// New invoices are refused until a payment.
+    Lapsed,
+    /// Runs to the end of its period with no grace, then lapses.
+    Cancelled,
+    /// A status this SDK does not know. Read [`Subscription::entitled`].
+    #[serde(other)]
+    Unknown,
+}
+
+impl SubscriptionStatus {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubscriptionStatus::Setup => "setup",
+            SubscriptionStatus::Waitlisted => "waitlisted",
+            SubscriptionStatus::Trialing => "trialing",
+            SubscriptionStatus::Active => "active",
+            SubscriptionStatus::PastDue => "past_due",
+            SubscriptionStatus::Lapsed => "lapsed",
+            SubscriptionStatus::Cancelled => "cancelled",
+            SubscriptionStatus::Unknown => "unknown",
+        }
+    }
+}
+
+/// The answer of `GET /v1/subscription`: the merchant's Kenari Pay for GoPay subscription. Times
+/// are unix seconds, amounts whole rupiah.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Subscription {
+    /// `sub_...`
+    pub id: String,
+    /// Where the subscription is, for display.
+    pub status: SubscriptionStatus,
+    /// The monthly price, copied when the subscription was made.
+    pub price_idr: i64,
+    /// When the trial ends, `None` before it starts.
+    #[serde(default)]
+    pub trial_ends_at: Option<i64>,
+    /// The start of the paid period, `None` before the first payment is applied.
+    #[serde(default)]
+    pub current_period_start: Option<i64>,
+    /// The end of the paid period, `None` before the first payment is applied.
+    #[serde(default)]
+    pub current_period_end: Option<i64>,
+    /// When new invoices stop if nothing is paid: the end plus the grace, the end itself once
+    /// cancelled. `None` while there is no end.
+    #[serde(default)]
+    pub grace_ends_at: Option<i64>,
+    /// Whether the gateway accepts a new invoice now. `false` means `POST /v1/qris/invoices` with a
+    /// new reference answers `402 subscription_inactive`.
+    pub entitled: bool,
+    /// Raised by every change. The events carry it.
+    pub seq: i64,
+    /// Whether this is the live gateway.
+    pub livemode: bool,
+}
+
 /// A webhook event, after [`crate::webhook::verify`] has checked its signature.
 ///
 /// The envelope (`id`, `type`, `created_at`) is read first, and `data` only for a type this SDK
 /// knows: the ids of a deposit for a `deposit.*` type, the ids of a QRIS invoice for a
-/// `qris_invoice.*` type, the ids of an Alipay invoice for an `alipay_invoice.*` type. So an event
-/// of a type this SDK does not know is still an event, with [`EventType::Unknown`] and none of
-/// `deposit`, `qris_invoice` and `alipay_invoice`, whatever its `data` holds.
+/// `qris_invoice.*` type, the ids of an Alipay invoice for an `alipay_invoice.*` type, the ids of
+/// the subscription for a `subscription.*` type. So an event of a type this SDK does not know is
+/// still an event, with [`EventType::Unknown`] and none of `deposit`, `qris_invoice`,
+/// `alipay_invoice` and `subscription`, whatever its `data` holds.
 /// Answer it 2xx and ignore it. A known type whose `data` is not the ids of that type is not an
 /// event at all, and fails to decode.
 ///
@@ -1077,16 +1192,21 @@ pub struct WebhookEvent {
     /// The ids of the Alipay invoice, `Some` for every `alipay_invoice.*` type and `None` for
     /// every other type. On the wire this is `data`.
     pub alipay_invoice: Option<AlipayInvoiceRef>,
+    /// The ids of the merchant's subscription, `Some` for every `subscription.*` type and `None`
+    /// for every other type. On the wire this is `data`.
+    pub subscription: Option<SubscriptionRef>,
 }
 
 impl Serialize for WebhookEvent {
-    /// The envelope, and `data` from whichever of `deposit`, `qris_invoice` and `alipay_invoice`
-    /// is set. When more than one is set, which decoding never makes, the first of them in that
+    /// The envelope, and `data` from whichever of `deposit`, `qris_invoice`, `alipay_invoice` and
+    /// `subscription` is set. When more than one is set, which decoding never makes, the first of them in that
     /// order wins.
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let has_data =
-            self.deposit.is_some() || self.qris_invoice.is_some() || self.alipay_invoice.is_some();
+        let has_data = self.deposit.is_some()
+            || self.qris_invoice.is_some()
+            || self.alipay_invoice.is_some()
+            || self.subscription.is_some();
         let mut out = serializer.serialize_struct("WebhookEvent", if has_data { 4 } else { 3 })?;
         out.serialize_field("id", &self.id)?;
         out.serialize_field("type", &self.event_type)?;
@@ -1097,6 +1217,8 @@ impl Serialize for WebhookEvent {
             out.serialize_field("data", invoice)?;
         } else if let Some(invoice) = &self.alipay_invoice {
             out.serialize_field("data", invoice)?;
+        } else if let Some(subscription) = &self.subscription {
+            out.serialize_field("data", subscription)?;
         }
         out.end()
     }
@@ -1117,7 +1239,8 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
     type Error = &'static str;
 
     fn try_from(raw: RawWebhookEvent) -> Result<WebhookEvent, Self::Error> {
-        let (mut deposit, mut qris_invoice, mut alipay_invoice) = (None, None, None);
+        let (mut deposit, mut qris_invoice, mut alipay_invoice, mut subscription) =
+            (None, None, None, None);
         if raw.event_type.is_deposit() {
             deposit = Some(
                 serde_json::from_value(raw.data)
@@ -1131,6 +1254,11 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
             alipay_invoice = Some(serde_json::from_value(raw.data).map_err(|_| {
                 "an Alipay invoice event needs data with invoice_id, reference and seq"
             })?);
+        } else if raw.event_type.is_subscription() {
+            subscription = Some(
+                serde_json::from_value(raw.data)
+                    .map_err(|_| "a subscription event needs data with subscription_id and seq")?,
+            );
         }
         Ok(WebhookEvent {
             id: raw.id,
@@ -1139,6 +1267,7 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
             deposit,
             qris_invoice,
             alipay_invoice,
+            subscription,
         })
     }
 }

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+The subscription of a Kenari Pay for GoPay merchant (gateway brief GS2).
+
+- `api` and `client`: `Api::subscription` and `Client::get_subscription`, `GET /v1/subscription`,
+  with a 404 (a merchant with no subscription) as `None`. `ApiError::is_subscription_inactive`,
+  `ClientError::is_subscription_inactive` and `api::SUBSCRIPTION_INACTIVE` name the `402
+  subscription_inactive` a new QRIS invoice gets while the subscription does not entitle the
+  merchant. The same reference again still answers the invoice already made.
+- `wire`: `Subscription` (`id`, `status`, `price_idr`, `trial_ends_at`, `current_period_start`,
+  `current_period_end`, `grace_ends_at`, `entitled`, `seq`, `livemode`) and `SubscriptionStatus`
+  (`setup`, `waitlisted`, `trialing`, `active`, `past_due`, `lapsed`, `cancelled`, with `Unknown`
+  for a word the SDK does not know). `entitled` is what decides, the status is for display.
+- `wire`: `EventType::SubscriptionRenewalDue`, `SubscriptionPastDue`, `SubscriptionLapsed` and
+  `SubscriptionActive`, `EventType::is_subscription`, and `WebhookEvent::subscription`, a
+  `SubscriptionRef` (`subscription_id`, `seq`): ids only, read `GET /v1/subscription` again.
+- `vectors/`: the gateway's `subscription.json`, `error_subscription_inactive.json` and
+  `webhook_subscription_past_due.json` (a signed body and its header).
+
+Breaking for code that builds a `WebhookEvent` with a struct literal: the new field.
+
 ## 0.6.0 (2026-10-31)
 
 The QRIS payment check: for a customer who says they paid, the merchant asks the gateway to look

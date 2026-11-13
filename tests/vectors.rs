@@ -15,8 +15,8 @@ use kenari_pay_sdk::wire::{
     Address, AddressKind, AlipayInvoice, AlipayInvoiceStatus, AlipayInvoicesPage, AlipayPacks,
     CustomerDeposits, Deposit, DepositStatus, DepositsPage, ErrorBody, EventType, Family, Keys,
     MatchedBy, Networks, PoolFile, QrisCheck, QrisCheckPayment, QrisCheckVerdict, QrisInvoice,
-    QrisInvoiceStatus, QrisInvoicesPage, QrisProvider, QrisWatch, SweepsPage, UniqueCodeMode,
-    WebhookEvent,
+    QrisInvoiceStatus, QrisInvoicesPage, QrisProvider, QrisWatch, Subscription, SubscriptionStatus,
+    SweepsPage, UniqueCodeMode, WebhookEvent,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -32,17 +32,20 @@ const DEPOSITS_PAGE: &str = include_str!("../vectors/deposits_page.json");
 const ERROR: &str = include_str!("../vectors/error_pool_exhausted.json");
 const ERROR_ALIPAY: &str = include_str!("../vectors/error_alipay_unavailable.json");
 const ERROR_QRIS: &str = include_str!("../vectors/error_qris_unavailable.json");
+const ERROR_SUBSCRIPTION: &str = include_str!("../vectors/error_subscription_inactive.json");
 const KEYS: &str = include_str!("../vectors/keys_list.json");
 const NETWORKS: &str = include_str!("../vectors/networks.json");
 const POOL_FILE: &str = include_str!("../vectors/pool_file.json");
 const QRIS_CHECK: &str = include_str!("../vectors/qris_check.json");
 const QRIS_INVOICE: &str = include_str!("../vectors/qris_invoice_paid.json");
 const QRIS_PAGE: &str = include_str!("../vectors/qris_invoices_page.json");
+const SUBSCRIPTION: &str = include_str!("../vectors/subscription.json");
 const SWEEPS_PAGE: &str = include_str!("../vectors/sweeps_page.json");
 const WEBHOOK_BODY: &str = include_str!("../vectors/webhook_deposit_confirmed.json");
 const WEBHOOK_ALIPAY: &str = include_str!("../vectors/webhook_alipay_invoice_paid.json");
 const WEBHOOK_QRIS: &str = include_str!("../vectors/webhook_qris_invoice_paid.json");
 const WEBHOOK_VECTOR: &str = include_str!("../vectors/webhook_signature_vector.json");
+const WEBHOOK_SUBSCRIPTION: &str = include_str!("../vectors/webhook_subscription_past_due.json");
 
 /// Decode an example, and serialize the result back: the JSON must be the same value, so a field
 /// the type dropped or renamed fails here and not at a merchant.
@@ -77,17 +80,20 @@ fn the_vectors_directory_is_the_contract_files_and_the_forwarder_vectors() {
         "error_alipay_unavailable.json",
         "error_pool_exhausted.json",
         "error_qris_unavailable.json",
+        "error_subscription_inactive.json",
         "keys_list.json",
         "networks.json",
         "pool_file.json",
         "qris_check.json",
         "qris_invoice_paid.json",
         "qris_invoices_page.json",
+        "subscription.json",
         "sweeps_page.json",
         "webhook_alipay_invoice_paid.json",
         "webhook_deposit_confirmed.json",
         "webhook_qris_invoice_paid.json",
         "webhook_signature_vector.json",
+        "webhook_subscription_past_due.json",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -1051,4 +1057,107 @@ fn a_tampered_copy_of_each_vector_is_refused() {
         ),
         Err(webhook::WebhookError::Mismatch)
     );
+}
+
+// ---- the subscription of a Kenari Pay for GoPay merchant ----
+
+#[test]
+fn the_subscription_example_decodes_round_trips_and_says_every_field() {
+    let sub: Subscription = round_trip("subscription.json", SUBSCRIPTION);
+    assert!(sub.id.starts_with("sub_"));
+    assert_eq!(sub.status, SubscriptionStatus::Active);
+    assert_eq!(sub.status.as_str(), "active");
+    assert_eq!(sub.price_idr, 199_000);
+    assert!(sub.entitled && sub.livemode);
+    let end = sub.current_period_end.unwrap();
+    assert!(sub.current_period_start.unwrap() < end);
+    // A period is 30 days, and the grace 7.
+    assert_eq!(end - sub.current_period_start.unwrap(), 30 * 86_400);
+    assert_eq!(sub.grace_ends_at, Some(end + 7 * 86_400));
+    // A status this SDK does not know still decodes, and entitlement is what decides.
+    let mut v: serde_json::Value = serde_json::from_str(SUBSCRIPTION).unwrap();
+    v["status"] = "on_hold".into();
+    let later: Subscription = serde_json::from_value(v).unwrap();
+    assert_eq!(later.status, SubscriptionStatus::Unknown);
+    // `livemode` and `entitled` are required.
+    for field in ["livemode", "entitled"] {
+        let mut v: serde_json::Value = serde_json::from_str(SUBSCRIPTION).unwrap();
+        v.as_object_mut().unwrap().remove(field);
+        assert!(
+            serde_json::from_value::<Subscription>(v).is_err(),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn the_subscription_inactive_example_is_a_402_the_sdk_names() {
+    let body: ErrorBody = round_trip("error_subscription_inactive.json", ERROR_SUBSCRIPTION);
+    assert_eq!(body.error.code, "subscription_inactive");
+    let error = Api::decode::<QrisInvoice>(402, ERROR_SUBSCRIPTION.as_bytes()).unwrap_err();
+    assert_eq!(
+        error,
+        ApiError::Status {
+            code: 402,
+            error_code: Some("subscription_inactive".into())
+        }
+    );
+    assert!(error.is_subscription_inactive());
+    assert_eq!(
+        kenari_pay_sdk::api::SUBSCRIPTION_INACTIVE,
+        body.error.code.as_str()
+    );
+    // The same code on another status, or another code on a 402, is not it.
+    assert!(
+        !Api::decode::<QrisInvoice>(403, ERROR_SUBSCRIPTION.as_bytes())
+            .unwrap_err()
+            .is_subscription_inactive()
+    );
+    assert!(!Api::decode::<QrisInvoice>(402, ERROR_QRIS.as_bytes())
+        .unwrap_err()
+        .is_subscription_inactive());
+}
+
+#[test]
+fn the_subscription_webhook_vector_verifies_and_reads_as_a_past_due_event() {
+    let v: serde_json::Value = serde_json::from_str(WEBHOOK_SUBSCRIPTION).unwrap();
+    let (secret, ts) = (
+        v["secret"].as_str().unwrap(),
+        v["timestamp"].as_i64().unwrap(),
+    );
+    let (body, header) = (
+        v["raw_body"].as_str().unwrap(),
+        v["header"].as_str().unwrap(),
+    );
+    let event = webhook::verify(header, body.as_bytes(), secret, ts).unwrap();
+    assert_eq!(event.event_type, EventType::SubscriptionPastDue);
+    assert!(event.event_type.is_subscription());
+    assert_eq!(event.event_type.as_str(), "subscription.past_due");
+    let sub = event.subscription.as_ref().unwrap();
+    assert!(sub.subscription_id.starts_with("sub_"));
+    assert_eq!(sub.seq, 5);
+    assert!(
+        event.deposit.is_none() && event.qris_invoice.is_none() && event.alipay_invoice.is_none()
+    );
+    // It serializes back to the exact signed bytes.
+    assert_eq!(serde_json::to_string(&event).unwrap(), body);
+    assert_eq!(webhook::sign(secret, ts, body.as_bytes()), header);
+    // A tampered body is refused.
+    let tampered = body.replace("\"seq\":5", "\"seq\":6");
+    assert_ne!(tampered, body);
+    assert!(webhook::verify(header, tampered.as_bytes(), secret, ts).is_err());
+    // Every subscription type reads its ids, and one without them is not an event.
+    for t in [
+        "subscription.renewal_due",
+        "subscription.past_due",
+        "subscription.lapsed",
+        "subscription.active",
+    ] {
+        let raw = body.replace("subscription.past_due", t);
+        let e: WebhookEvent = serde_json::from_str(&raw).unwrap();
+        assert_eq!(e.event_type.as_str(), t);
+        assert!(e.subscription.is_some(), "{t}");
+        let bare = serde_json::json!({"id": "evt_1", "type": t, "created_at": 1, "data": {}});
+        assert!(serde_json::from_value::<WebhookEvent>(bare).is_err(), "{t}");
+    }
 }

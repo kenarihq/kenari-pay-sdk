@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "subscription_inactive",
+    "message": "This merchant's Kenari Pay subscription is not active. Renew it in the portal to create new invoices."
+  }
+}
