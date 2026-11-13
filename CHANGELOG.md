@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+QRIS test mode on the live gateway (gateway brief GST).
+
+- `wire`: `WebhookEvent::livemode`, an `Option<bool>`: a `qris_invoice.*` body now carries the
+  invoice's `livemode`, `false` for a test invoice. `None` for every other type and for a body of an
+  older gateway. A struct literal of `WebhookEvent` needs the new field.
+- Docs: a `kp_test_` key is the sandbox's key, or on the live gateway a merchant's test key, which
+  reaches the QRIS calls only and makes test invoices (`livemode: false`, `provider` and
+  `matched_by` `simulated`). The README's QRIS credit rule is unchanged and refuses them.
+- `vectors/`: the gateway's `webhook_qris_invoice_paid.json` with `"livemode":true`.
+
 The subscription of a Kenari Pay for GoPay merchant (gateway brief GS2).
 
 - `api` and `client`: `Api::subscription` and `Client::get_subscription`, `GET /v1/subscription`,

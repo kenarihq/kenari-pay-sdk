@@ -377,6 +377,16 @@ fn the_qris_examples_decode_round_trip_and_agree_with_each_other() {
     assert_eq!(refs.invoice_id, invoice.id);
     assert_eq!(refs.reference, invoice.reference);
     assert_eq!(refs.seq, invoice.seq);
+    // The body says the invoice's mode. A test invoice's body says false, and a body with no
+    // `livemode` (another type, an older gateway) decodes with None and serializes without it.
+    assert_eq!(event.livemode, Some(invoice.livemode));
+    let test_body = WEBHOOK_QRIS.replace("\"livemode\":true", "\"livemode\":false");
+    let test_event: WebhookEvent = round_trip("a test invoice's webhook", &test_body);
+    assert_eq!(test_event.livemode, Some(false));
+    let old_body = WEBHOOK_QRIS.replace("\"livemode\":true,", "");
+    let old_event: WebhookEvent = round_trip("a webhook of an older gateway", &old_body);
+    assert_eq!(old_event.livemode, None);
+    assert_eq!(old_event.qris_invoice, event.qris_invoice);
 
     let error: ErrorBody = round_trip("error_qris_unavailable.json", ERROR_QRIS);
     assert_eq!(error.error.code, "unavailable");

@@ -257,7 +257,8 @@ pub enum QrisProvider {
     Gopay,
     /// A ShopeePay merchant account.
     Shopee,
-    /// The sandbox's simulated account. Never on live.
+    /// A simulated account: the sandbox's, or the test account of the live gateway's QRIS test mode,
+    /// whose invoices answer `livemode: false`. Never on a live invoice.
     Simulated,
     /// A provider this SDK does not know. The invoice is still read, and its status still decides.
     /// Never send it in a request, no gateway accepts it.
@@ -285,7 +286,9 @@ pub enum MatchedBy {
     Feed,
     /// An operator assigned a payment by hand. `paid_amount` can differ from `amount_due`.
     Operator,
-    /// `POST /v1/sandbox/qris/invoices/{id}/pay` on the sandbox. Never on live.
+    /// `POST /v1/sandbox/qris/invoices/{id}/pay` on the sandbox, or `POST
+    /// /v1/test/qris/invoices/{id}/pay` (and Pay in the portal) on a test invoice of the live
+    /// gateway. Never on a live invoice.
     Simulated,
     /// A way this SDK does not know. Hold the invoice for a person.
     #[serde(other)]
@@ -684,7 +687,8 @@ pub struct QrisInvoice {
     pub repeat_payments: Vec<QrisRepeatPayment>,
     /// The feed position, reassigned on every state change and every repeat payment.
     pub seq: i64,
-    /// `true` on the live gateway, `false` on the sandbox.
+    /// `true` on the live gateway, `false` on the sandbox and for a test invoice of the live
+    /// gateway's QRIS test mode (made with the merchant's test key, `kp_test_...`).
     pub livemode: bool,
 }
 
@@ -1163,7 +1167,7 @@ pub struct Subscription {
 
 /// A webhook event, after [`crate::webhook::verify`] has checked its signature.
 ///
-/// The envelope (`id`, `type`, `created_at`) is read first, and `data` only for a type this SDK
+/// The envelope (`id`, `type`, `created_at`, and `livemode` when the body has it) is read first, and `data` only for a type this SDK
 /// knows: the ids of a deposit for a `deposit.*` type, the ids of a QRIS invoice for a
 /// `qris_invoice.*` type, the ids of an Alipay invoice for an `alipay_invoice.*` type, the ids of
 /// the subscription for a `subscription.*` type. So an event of a type this SDK does not know is
@@ -1183,6 +1187,11 @@ pub struct WebhookEvent {
     pub event_type: EventType,
     /// When the event was made, in unix seconds.
     pub created_at: i64,
+    /// The object's `livemode`, carried by a `qris_invoice.*` event since the gateway's QRIS test
+    /// mode: `Some(false)` for a test invoice, which goes only to the test webhook URL, signed with
+    /// the test secret. `None` when the body has none (every other type, and an older gateway). The
+    /// re-fetched object's `livemode` is what decides.
+    pub livemode: Option<bool>,
     /// The ids of the deposit, `Some` for every deposit type and `None` for every other type. On
     /// the wire this is `data`.
     pub deposit: Option<DepositRef>,
@@ -1207,10 +1216,14 @@ impl Serialize for WebhookEvent {
             || self.qris_invoice.is_some()
             || self.alipay_invoice.is_some()
             || self.subscription.is_some();
-        let mut out = serializer.serialize_struct("WebhookEvent", if has_data { 4 } else { 3 })?;
+        let fields = 3 + usize::from(has_data) + usize::from(self.livemode.is_some());
+        let mut out = serializer.serialize_struct("WebhookEvent", fields)?;
         out.serialize_field("id", &self.id)?;
         out.serialize_field("type", &self.event_type)?;
         out.serialize_field("created_at", &self.created_at)?;
+        if let Some(livemode) = self.livemode {
+            out.serialize_field("livemode", &livemode)?;
+        }
         if let Some(deposit) = &self.deposit {
             out.serialize_field("data", deposit)?;
         } else if let Some(invoice) = &self.qris_invoice {
@@ -1231,6 +1244,8 @@ struct RawWebhookEvent {
     #[serde(rename = "type")]
     event_type: EventType,
     created_at: i64,
+    #[serde(default)]
+    livemode: Option<bool>,
     #[serde(default)]
     data: serde_json::Value,
 }
@@ -1264,6 +1279,7 @@ impl TryFrom<RawWebhookEvent> for WebhookEvent {
             id: raw.id,
             event_type: raw.event_type,
             created_at: raw.created_at,
+            livemode: raw.livemode,
             deposit,
             qris_invoice,
             alipay_invoice,
