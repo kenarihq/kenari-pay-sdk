@@ -15,9 +15,11 @@ part:
 - advance the feed cursor only after a deposit has been processed.
 
 It holds no secret and opens no connection. It is the wire types, the address check, the webhook
-check and the building of requests, tested against the gateway's own examples. The full API is in
-the gateway's `docs/api.md`, served at `https://pay.kenari.id/llms-full.txt` to your API key (the
-sandbox key reads it on `https://pay-sandbox.kenari.id`).
+check and the building of requests, tested against the gateway's own examples. The merchant
+reference (`https://pay.kenari.id/llms-full.txt`), its OpenAPI (`/openapi.json`) and the public
+contract files (`/contract/{name}.json`) need no key. The operator sections of the gateway's
+`docs/api.md` answer only to the operator's credentials (the sandbox's on
+`https://pay-sandbox.kenari.id`).
 
 ## Install
 
