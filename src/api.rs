@@ -257,7 +257,8 @@ fn checked_base(base_url: &str) -> Result<String, ApiError> {
 
 impl Api {
     /// An API for `base_url` (`https://pay.kenari.id` live or `https://pay-sandbox.kenari.id`
-    /// sandbox) and the merchant's key (`kp_live_...` or `kp_test_...`). White space around both
+    /// sandbox) and the merchant's key (`kp_live_...`, or `kp_test_...`: the sandbox's key, or on the
+    /// live gateway the test key of QRIS test mode, which reaches the QRIS calls only). White space around both
     /// and a trailing slash on the URL are dropped.
     ///
     /// The key is sent on every call, so the URL must be `https://`. The one exception is

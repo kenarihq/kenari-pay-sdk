@@ -39,6 +39,13 @@ A merchant holds an API key (`kp_test_...` on the sandbox, `kp_live_...` on live
 secret (`whsec_...`). Every object carries `livemode`, and the check below refuses any whose
 `livemode` is not the mode you run in.
 
+A Kenari Pay for GoPay merchant also has QRIS test mode on the live gateway: a test key
+(`kp_test_...` on `https://pay.kenari.id`, made in the portal) and a test webhook secret. With the
+test key every QRIS call makes and reads test invoices only, which answer `livemode: false`, and
+their webhooks go to the test webhook URL signed with the test secret. Run your QRIS code with the
+test key and `live = false`, then switch to the live key and `live = true`. Every call other than
+the QRIS ones refuses the test key with `403`.
+
 ### 2. Say what you trust
 
 Everything in `Trust` is yours. None of it comes from the gateway, which is the point: an address
@@ -256,7 +263,9 @@ fn creditable(invoice: &QrisInvoice, live: bool) -> bool {
 - `expired` is not final. A payment that lands before `match_until` still turns it `paid`, so keep
   the payment pending until then.
 - `matched_by` `simulated` comes only from `POST /v1/sandbox/qris/invoices/{id}/pay` on the
-  sandbox. On live it means something is wrong: stop and alert a person.
+  sandbox and from paying a test invoice (`POST /v1/test/qris/invoices/{id}/pay`, or Pay in the
+  portal) in QRIS test mode, whose invoices are `livemode: false`. On a `livemode: true` invoice it
+  means something is wrong: stop and alert a person. The check above refuses it either way.
 - The refusals are `403 forbidden` (QRIS not enabled), `503 unavailable` (no account can take the
   payment right now, or every code of the amount is taken) and `429 rate_limited` (the daily cap).
   Offer the customer another way to pay.
