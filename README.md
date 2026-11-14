@@ -2,8 +2,9 @@
 
 The merchant SDK for kenari-pay, the watch-only deposit gateway kenari.id runs for its own
 payments. kenari asks for a customer's permanent deposit address, the customer sends a stablecoin to
-it, and the gateway reports the deposit through a signed webhook and a pull feed. The gateway takes
-no outside merchants. The SDK is public so the checks below can be read and reviewed.
+it, and the gateway reports the deposit through a signed webhook and a pull feed. The same gateway
+serves outside merchants as Kenari Pay for GoPay: QRIS payments on the merchant's own GoPay merchant
+account, reported the same way. The SDK is public so the checks below can be read and reviewed.
 
 What a merchant has to get right is small and easy to get wrong, and this crate does exactly that
 part:
@@ -220,12 +221,13 @@ the gateway and not that the body is true, so never act on the body.
 
 ### 7. QRIS invoices, if the operator enabled them
 
-A merchant the operator enabled QRIS for can also take rupiah. The gateway holds a QRIS merchant
-account, adds a unique code of Rp0 to Rp999 to your amount so each open invoice of an amount is
-told apart, and marks the invoice paid when exactly that amount lands. With `unique_code_mode:
-Some(UniqueCodeMode::Subtract)` the code is taken off your amount instead, so the customer never
-pays more than you showed: take the code from your own fee, and ask a `max_unique_code` no larger
-than that fee. `QrisInvoice::unique_code_mode` says which one the invoice used.
+A merchant the operator enabled QRIS for can also take rupiah, and a Kenari Pay for GoPay merchant
+takes only rupiah. The gateway turns the static QRIS of the merchant's own GoPay merchant account
+into one QRIS per invoice, adds a unique code of Rp0 to Rp999 to your amount so each open invoice
+of an amount is told apart, and marks the invoice paid when exactly that amount lands. With
+`unique_code_mode: Some(UniqueCodeMode::Subtract)` the code is taken off your amount instead, so the
+customer never pays more than you showed: take the code from your own fee, and ask a
+`max_unique_code` no larger than that fee. `QrisInvoice::unique_code_mode` says which one the invoice used.
 
 ```rust
 use kenari_pay_sdk::api::{Api, ApiError, HttpRequest};
