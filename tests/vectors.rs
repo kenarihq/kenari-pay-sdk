@@ -15,8 +15,8 @@ use kenari_pay_sdk::wire::{
     Address, AddressKind, AlipayInvoice, AlipayInvoiceStatus, AlipayInvoicesPage, AlipayPacks,
     CustomerDeposits, Deposit, DepositStatus, DepositsPage, ErrorBody, EventType, Family, Keys,
     MatchedBy, Networks, PoolFile, QrisCheck, QrisCheckPayment, QrisCheckVerdict, QrisInvoice,
-    QrisInvoiceStatus, QrisInvoicesPage, QrisProvider, QrisWatch, Subscription, SubscriptionStatus,
-    SweepsPage, UniqueCodeMode, WebhookEvent,
+    QrisInvoiceStatus, QrisInvoicesPage, QrisProvider, QrisTelegramStatus, QrisWatch, Subscription,
+    SubscriptionStatus, SweepsPage, UniqueCodeMode, WebhookEvent,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -628,6 +628,55 @@ fn the_qris_check_example_decodes_round_trips_and_says_every_field() {
             "read.{required} is required"
         );
     }
+}
+
+#[test]
+fn a_qris_invoice_sent_through_a_store_bot_says_what_became_of_the_send() {
+    // The example was made without `telegram`: the field is absent, reads as `None` and stays out
+    // when written back, so the example still round trips byte for byte.
+    let plain: QrisInvoice = serde_json::from_str(QRIS_INVOICE).unwrap();
+    assert!(!QRIS_INVOICE.contains("\"telegram\""));
+    assert_eq!(plain.telegram, None);
+    assert!(serde_json::to_value(&plain)
+        .unwrap()
+        .get("telegram")
+        .is_none());
+
+    // One made with `telegram` carries the chat and the send's status, a word the SDK does not
+    // know included. The status never decides the invoice.
+    for (word, status) in [
+        ("pending", QrisTelegramStatus::Pending),
+        ("sent", QrisTelegramStatus::Sent),
+        ("failed", QrisTelegramStatus::Failed),
+        ("queued", QrisTelegramStatus::Unknown),
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(QRIS_INVOICE).unwrap();
+        value["telegram"] = serde_json::json!({"chat_id": -1001234567890_i64, "status": word});
+        let invoice: QrisInvoice = serde_json::from_value(value).unwrap();
+        let telegram = invoice.telegram.clone().unwrap();
+        assert_eq!(telegram.chat_id, -1_001_234_567_890);
+        assert_eq!(telegram.status, status);
+        assert_eq!(invoice.paid_exactly(), plain.paid_exactly(), "{word}");
+        if status != QrisTelegramStatus::Unknown {
+            assert_eq!(status.as_str(), word);
+            let back = serde_json::to_value(&invoice).unwrap();
+            assert_eq!(back["telegram"]["status"], word);
+        }
+    }
+}
+
+#[test]
+fn a_qris_invoice_the_merchant_linked_in_its_portal_reads_as_merchant() {
+    // `merchant`: the merchant linked a held payment to the invoice by hand. Of the exact amount it
+    // is creditable as any paid invoice, of another amount it is held for a person.
+    let text = QRIS_INVOICE.replace("\"matched_by\": \"feed\"", "\"matched_by\": \"merchant\"");
+    assert!(text.contains("\"merchant\""), "the replacement took");
+    let mut invoice: QrisInvoice = serde_json::from_str(&text).unwrap();
+    assert_eq!(invoice.matched_by, Some(MatchedBy::Merchant));
+    assert_eq!(MatchedBy::Merchant.as_str(), "merchant");
+    assert!(invoice.paid_exactly());
+    invoice.paid_amount = Some(invoice.amount_due - 1);
+    assert!(!invoice.paid_exactly());
 }
 
 #[test]
