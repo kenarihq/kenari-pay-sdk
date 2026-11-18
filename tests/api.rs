@@ -5,7 +5,8 @@ use kenari_pay_sdk::wire::{
     Address, AlipayInvoice, AlipayInvoiceStatus, AlipayInvoicesPage, AlipayPacks,
     CreateAlipayInvoice, CreateQrisInvoice, CustomerDeposits, Deposit, DepositsPage, Family, Key,
     Keys, Networks, PoolFile, PoolImported, QrisCheck, QrisCheckVerdict, QrisInvoice,
-    QrisInvoicesPage, QrisProvider, QrisWatch, SweepsPage, UniqueCodeMode,
+    QrisInvoicesPage, QrisProvider, QrisTelegramSend, QrisWatch, SweepsPage, TelegramLang,
+    UniqueCodeMode,
 };
 
 const KEY: &str = "kp_test_SECRETKEYSECRETKEYSECRETKEYSECRETKEYSECRETK";
@@ -195,6 +196,43 @@ fn a_write_is_a_post_with_a_json_body_and_its_content_type() {
     let read: CreateQrisInvoice =
         serde_json::from_str(r#"{"reference":"r","customer_ref":"c","amount_idr":1000}"#).unwrap();
     assert_eq!(read, CreateQrisInvoice::new("r", "c", 1000));
+
+    // A Telegram send goes out as `telegram`, its note and language only when set. A group's chat
+    // id is negative.
+    let plain = CreateQrisInvoice {
+        telegram: Some(QrisTelegramSend::new(7_000_000_001)),
+        ..CreateQrisInvoice::new("pay_1", "usr_1", 25_000)
+    };
+    assert_eq!(
+        body_json(&api().create_qris_invoice(&plain)),
+        serde_json::json!({
+            "reference": "pay_1",
+            "customer_ref": "usr_1",
+            "amount_idr": 25000,
+            "telegram": {"chat_id": 7000000001_i64}
+        })
+    );
+    for (lang, word) in [(TelegramLang::Id, "id"), (TelegramLang::En, "en")] {
+        let invoice = CreateQrisInvoice {
+            telegram: Some(QrisTelegramSend {
+                note: Some("Meja 4".to_string()),
+                lang: Some(lang),
+                ..QrisTelegramSend::new(-1_001_234_567_890)
+            }),
+            ..CreateQrisInvoice::new("pay_1", "usr_1", 25_000)
+        };
+        let body = body_json(&api().create_qris_invoice(&invoice));
+        assert_eq!(
+            body["telegram"],
+            serde_json::json!({"chat_id": -1001234567890_i64, "note": "Meja 4", "lang": word})
+        );
+        assert_eq!(lang.as_str(), word);
+        let read: CreateQrisInvoice = serde_json::from_value(body).unwrap();
+        assert_eq!(read, invoice);
+    }
+    assert!(body_json(&api().create_qris_invoice(&only_max))
+        .get("telegram")
+        .is_none());
 }
 
 #[test]

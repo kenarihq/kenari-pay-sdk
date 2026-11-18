@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+The merchant API's host, payments a merchant links in its portal, and the seller's own Telegram
+store bot (gateway #94 and #95).
+
+- Docs: on live the merchant calls go to `https://pay-api.kenari.id` (`Api::new`, the README), and
+  `https://pay.kenari.id` serves the portal and the docs. The sandbox is unchanged. The webhook URL
+  is optional: a server or a bot with no public URL reads the pull feed.
+- `wire`: `MatchedBy::Merchant` (`merchant`), the merchant linked a held payment to the invoice in
+  its portal. `paid_exactly` is unchanged: of another amount it is held for a person, as an
+  operator's assign. Before this a `merchant` match read as `Unknown`.
+- `wire`: `CreateQrisInvoice::telegram`, a `QrisTelegramSend` (`chat_id`, `note`, `lang` as
+  `TelegramLang` `id` or `en`), sends the QRIS to the buyer's chat through the merchant's own store
+  bot. `QrisInvoice::telegram`, a `QrisInvoiceTelegram` (`chat_id`, `status` as
+  `QrisTelegramStatus` `pending`, `sent`, `failed`, with `Unknown`), only on such an invoice. A
+  struct literal of either type needs the new field (`..CreateQrisInvoice::new(...)` does not).
+
 QRIS test mode on the live gateway (gateway brief GST).
 
 - `wire`: `WebhookEvent::livemode`, an `Option<bool>`: a `qris_invoice.*` body now carries the

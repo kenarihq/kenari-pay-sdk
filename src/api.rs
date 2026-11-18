@@ -256,10 +256,11 @@ fn checked_base(base_url: &str) -> Result<String, ApiError> {
 }
 
 impl Api {
-    /// An API for `base_url` (`https://pay.kenari.id` live or `https://pay-sandbox.kenari.id`
-    /// sandbox) and the merchant's key (`kp_live_...`, or `kp_test_...`: the sandbox's key, or on the
-    /// live gateway the test key of QRIS test mode, which reaches the QRIS calls only). White space around both
-    /// and a trailing slash on the URL are dropped.
+    /// An API for `base_url` (`https://pay-api.kenari.id` live, the merchant API's host, or
+    /// `https://pay-sandbox.kenari.id` sandbox) and the merchant's key (`kp_live_...`, or
+    /// `kp_test_...`: the sandbox's key, or on the live gateway the test key of QRIS test mode,
+    /// which reaches the QRIS calls only). White space around both and a trailing slash on the URL
+    /// are dropped.
     ///
     /// The key is sent on every call, so the URL must be `https://`. The one exception is
     /// `http://` to a loopback host (`localhost`, `127.0.0.1` or `[::1]`, with or without a
@@ -411,6 +412,12 @@ impl Api {
     /// unavailable` when the gateway cannot watch for the payment right now or every unique code
     /// of the amount is taken (try again in a minute), and `429 rate_limited` above the daily cap,
     /// with `Retry-After`. Show the customer another way to pay, never the gateway's message.
+    ///
+    /// With [`CreateQrisInvoice::telegram`] the gateway also sends the QRIS to the buyer's chat
+    /// through the merchant's own Telegram store bot, and answers `409 invalid_request` before
+    /// making anything while the merchant has no connected bot (connect it in the portal). A send
+    /// never blocks or fails the invoice: read
+    /// [`QrisInvoice::telegram`](crate::wire::QrisInvoice::telegram) for what became of it.
     pub fn create_qris_invoice(&self, invoice: &CreateQrisInvoice) -> HttpRequest {
         self.post("/v1/qris/invoices", Some(json_body(invoice)))
     }

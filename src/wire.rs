@@ -286,6 +286,9 @@ pub enum MatchedBy {
     Feed,
     /// An operator assigned a payment by hand. `paid_amount` can differ from `amount_due`.
     Operator,
+    /// The merchant linked a held payment to the invoice by hand, in its portal. `paid_amount` can
+    /// differ from `amount_due`, as for `Operator`.
+    Merchant,
     /// `POST /v1/sandbox/qris/invoices/{id}/pay` on the sandbox, or `POST
     /// /v1/test/qris/invoices/{id}/pay` (and Pay in the portal) on a test invoice of the live
     /// gateway. Never on a live invoice.
@@ -301,6 +304,7 @@ impl MatchedBy {
         match self {
             MatchedBy::Feed => "feed",
             MatchedBy::Operator => "operator",
+            MatchedBy::Merchant => "merchant",
             MatchedBy::Simulated => "simulated",
             MatchedBy::Unknown => "unknown",
         }
@@ -611,11 +615,17 @@ pub struct CreateQrisInvoice {
     /// picks the merchant's usable account of the lowest priority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<QrisProvider>,
+    /// Send the invoice's QRIS to a buyer's Telegram chat through the merchant's own store bot,
+    /// connected once in the portal (Settings, Bot toko Anda). `None` leaves it out of the body,
+    /// and nothing is sent. The invoice answers [`QrisInvoice::telegram`] with what became of the
+    /// send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram: Option<QrisTelegramSend>,
 }
 
 impl CreateQrisInvoice {
-    /// The request for `amount_idr` with no `max_unique_code`, no `unique_code_mode` and no
-    /// `provider`, so the gateway's defaults apply.
+    /// The request for `amount_idr` with no `max_unique_code`, no `unique_code_mode`, no `provider`
+    /// and no `telegram`, so the gateway's defaults apply.
     pub fn new(reference: &str, customer_ref: &str, amount_idr: i64) -> CreateQrisInvoice {
         CreateQrisInvoice {
             reference: reference.to_string(),
@@ -624,6 +634,95 @@ impl CreateQrisInvoice {
             max_unique_code: None,
             unique_code_mode: None,
             provider: None,
+            telegram: None,
+        }
+    }
+}
+
+/// Where [`CreateQrisInvoice::telegram`] sends the QRIS: the buyer's chat with the merchant's own
+/// Telegram store bot. Kenari Pay sends the QR as a picture with the amount to pay and when it
+/// expires, edits its caption to `Lunas` when the invoice is paid and says when it expired unpaid.
+/// Payment messages only: the merchant's own program still delivers the goods once the invoice is
+/// `paid`, and Kenari Pay never reads the bot's messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisTelegramSend {
+    /// The buyer's chat with the store bot, as Telegram gave it to the bot. A group's is negative.
+    pub chat_id: i64,
+    /// A line under the amount (`Catatan: ...`), 1 to 100 characters with no control character.
+    /// `None` leaves it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// The language of the captions. `None` leaves it out of the body, which the gateway reads as
+    /// [`TelegramLang::Id`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<TelegramLang>,
+}
+
+impl QrisTelegramSend {
+    /// A send to `chat_id` with no note, in Indonesian.
+    pub fn new(chat_id: i64) -> QrisTelegramSend {
+        QrisTelegramSend {
+            chat_id,
+            note: None,
+            lang: None,
+        }
+    }
+}
+
+/// The language of a Telegram QRIS caption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelegramLang {
+    /// Indonesian, the gateway's default.
+    Id,
+    /// English.
+    En,
+}
+
+impl TelegramLang {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TelegramLang::Id => "id",
+            TelegramLang::En => "en",
+        }
+    }
+}
+
+/// What became of the QRIS sent to a buyer's Telegram chat, [`QrisInvoice::telegram`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrisInvoiceTelegram {
+    /// The buyer's chat the QRIS was sent to.
+    pub chat_id: i64,
+    /// Whether the chat has it.
+    pub status: QrisTelegramStatus,
+}
+
+/// Where a Telegram QRIS send stands. It never decides the invoice: a `Failed` send leaves the
+/// invoice payable as any other, so show the QRIS another way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QrisTelegramStatus {
+    /// Not sent yet.
+    Pending,
+    /// The buyer's chat has the QRIS.
+    Sent,
+    /// It could not be sent: the buyer blocked the bot or never started it, or the bot was
+    /// disconnected or its token refused before the send.
+    Failed,
+    /// A state this SDK does not know.
+    #[serde(other)]
+    Unknown,
+}
+
+impl QrisTelegramStatus {
+    /// The name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            QrisTelegramStatus::Pending => "pending",
+            QrisTelegramStatus::Sent => "sent",
+            QrisTelegramStatus::Failed => "failed",
+            QrisTelegramStatus::Unknown => "unknown",
         }
     }
 }
@@ -690,6 +789,10 @@ pub struct QrisInvoice {
     /// `true` on the live gateway, `false` on the sandbox and for a test invoice of the live
     /// gateway's QRIS test mode (made with the merchant's test key, `kp_test_...`).
     pub livemode: bool,
+    /// What became of the QRIS sent to the buyer's Telegram chat, only on an invoice made with
+    /// [`CreateQrisInvoice::telegram`]. `None` on every other invoice and from an older gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram: Option<QrisInvoiceTelegram>,
 }
 
 /// A second payment of a QRIS invoice, besides the one that paid it, an entry of
@@ -720,7 +823,7 @@ impl QrisRepeatPayment {
 impl QrisInvoice {
     /// `true` when the invoice is `paid` and `paid_amount` is exactly `amount_due`. Only such an
     /// invoice is safe to credit without a person. A paid invoice with another amount was
-    /// assigned by an operator: hold it for a person.
+    /// assigned by hand, by an operator or by the merchant in its portal: hold it for a person.
     pub fn paid_exactly(&self) -> bool {
         self.status == QrisInvoiceStatus::Paid && self.paid_amount == Some(self.amount_due)
     }
@@ -1623,6 +1726,7 @@ mod tests {
         for (word, matched) in [
             ("feed", MatchedBy::Feed),
             ("operator", MatchedBy::Operator),
+            ("merchant", MatchedBy::Merchant),
             ("simulated", MatchedBy::Simulated),
         ] {
             let json = format!("\"{word}\"");

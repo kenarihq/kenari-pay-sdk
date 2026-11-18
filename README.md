@@ -39,15 +39,18 @@ run. The off by default feature `reqwest` adds `client::Client`, the calls ready
 ### 1. Keys
 
 A merchant holds an API key (`kp_test_...` on the sandbox, `kp_live_...` on live) and a webhook
-secret (`whsec_...`). Every object carries `livemode`, and the check below refuses any whose
-`livemode` is not the mode you run in.
+secret (`whsec_...`). On live the merchant calls go to `https://pay-api.kenari.id`, and
+`https://pay.kenari.id` serves the portal and the docs. The sandbox answers both on
+`https://pay-sandbox.kenari.id`. Every object carries `livemode`, and the check below refuses any
+whose `livemode` is not the mode you run in.
 
 A Kenari Pay for GoPay merchant also has QRIS test mode on the live gateway: a test key
-(`kp_test_...` on `https://pay.kenari.id`, made in the portal) and a test webhook secret. With the
-test key every QRIS call makes and reads test invoices only, which answer `livemode: false`, and
-their webhooks go to the test webhook URL signed with the test secret. Run your QRIS code with the
-test key and `live = false`, then switch to the live key and `live = true`. Every call other than
-the QRIS ones refuses the test key with `403`.
+(`kp_test_...`, made in the portal and sent to `https://pay-api.kenari.id` like the live key) and a
+test webhook secret. The webhook URL is optional: a server or a bot with no public URL reads the
+pull feed instead. With the test key every QRIS call makes and reads test invoices only, which
+answer `livemode: false`, and their webhooks go to the test webhook URL signed with the test secret.
+Run your QRIS code with the test key and `live = false`, then switch to the live key and
+`live = true`. Every call other than the QRIS ones refuses the test key with `403`.
 
 ### 2. Say what you trust
 
@@ -262,8 +265,9 @@ fn creditable(invoice: &QrisInvoice, live: bool) -> bool {
 ```
 
 - Credit an invoice once per `id`, after a re-fetch, only when `paid_exactly()` holds: `status` is
-  `paid` and `paid_amount` is `amount_due`. A paid invoice with another amount was assigned by an
-  operator, so hold it for a person.
+  `paid` and `paid_amount` is `amount_due`. A paid invoice with another amount was assigned by hand,
+  by an operator (`matched_by` `operator`) or by you in the portal (`merchant`), so hold it for a
+  person.
 - `expired` is not final. A payment that lands before `match_until` still turns it `paid`, so keep
   the payment pending until then.
 - `matched_by` `simulated` comes only from `POST /v1/sandbox/qris/invoices/{id}/pay` on the
@@ -279,6 +283,12 @@ fn creditable(invoice: &QrisInvoice, live: bool) -> bool {
   `entitled` and the dates, and the `subscription.*` webhooks say when to read it again.
 - The feed `GET /v1/qris/invoices` follows the cursor rule above, with `Cursor::qris_invoices` and
   at most 100 invoices a page.
+- A store that sells through its own Telegram bot connects the bot once in the portal (Settings, Bot
+  toko Anda). Then `telegram: Some(QrisTelegramSend::new(chat_id))` on `CreateQrisInvoice` sends the
+  QRIS to the buyer's chat through that bot and edits it to `Lunas` once paid. `409 invalid_request`
+  means no bot is connected. `QrisInvoice::telegram` says whether the chat got it, and a `failed`
+  send never fails the invoice. Deliver the goods yourself once the invoice is creditable, as for
+  any other.
 
 ### 8. Alipay invoices, if the merchant has an Alipay account
 
