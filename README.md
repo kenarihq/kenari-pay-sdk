@@ -285,10 +285,10 @@ fn creditable(invoice: &QrisInvoice, live: bool) -> bool {
   at most 100 invoices a page.
 - A store that sells through its own Telegram bot connects the bot once in the portal (Settings, Bot
   toko Anda). Then `telegram: Some(QrisTelegramSend::new(chat_id))` on `CreateQrisInvoice` sends the
-  QRIS to the buyer's chat through that bot and edits it to `Lunas` once paid. `409 invalid_request`
-  means no bot is connected. `QrisInvoice::telegram` says whether the chat got it, and a `failed`
-  send never fails the invoice. Deliver the goods yourself once the invoice is creditable, as for
-  any other.
+  QRIS to the buyer's chat through that bot and edits it to `Lunas` (`Paid` with `TelegramLang::En`)
+  once paid. `409 invalid_request` means no bot is connected. `QrisInvoice::telegram` says whether
+  the chat got it, and a `failed` send never fails the invoice. Deliver the goods yourself once the
+  invoice is creditable, as for any other.
 
 ### 8. Alipay invoices, if the merchant has an Alipay account
 

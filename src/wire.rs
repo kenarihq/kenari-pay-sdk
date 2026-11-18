@@ -641,14 +641,16 @@ impl CreateQrisInvoice {
 
 /// Where [`CreateQrisInvoice::telegram`] sends the QRIS: the buyer's chat with the merchant's own
 /// Telegram store bot. Kenari Pay sends the QR as a picture with the amount to pay and when it
-/// expires, edits its caption to `Lunas` when the invoice is paid and says when it expired unpaid.
+/// expires, edits its caption to `Lunas` (`Paid` in English) when the invoice is paid and says when
+/// it expired unpaid.
 /// Payment messages only: the merchant's own program still delivers the goods once the invoice is
 /// `paid`, and Kenari Pay never reads the bot's messages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QrisTelegramSend {
     /// The buyer's chat with the store bot, as Telegram gave it to the bot. A group's is negative.
     pub chat_id: i64,
-    /// A line under the amount (`Catatan: ...`), 1 to 100 characters with no control character.
+    /// A line under the amount (`Catatan: ...`, `Note: ...` in English), 1 to 100 characters with
+    /// no control character.
     /// `None` leaves it out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -844,9 +846,9 @@ pub struct QrisInvoicesPage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QrisCheckVerdict {
-    /// The invoice is paid. [`QrisCheck::payment`] is the feed row that paid it, null when an
-    /// operator assigned the payment. Credit by the invoice and its `qris_invoice.paid` webhook as
-    /// always, after [`QrisInvoice::paid_exactly`].
+    /// The invoice is paid. [`QrisCheck::payment`] is the feed row that paid it, null when the
+    /// payment was assigned by hand (`matched_by` `operator` or `merchant`). Credit by the invoice
+    /// and its `qris_invoice.paid` webhook as always, after [`QrisInvoice::paid_exactly`].
     Paid,
     /// A settlement or a refund of this amount the gateway could not give the invoice by itself, or
     /// an invoice whose window the operator closed. The operator decides, so tell the customer it is
@@ -953,8 +955,8 @@ pub struct QrisCheck {
     pub invoice: QrisInvoice,
     /// What the check found.
     pub verdict: QrisCheckVerdict,
-    /// The feed row that paid the invoice, on a `paid` verdict. Null otherwise, and null when an
-    /// operator assigned the payment.
+    /// The feed row that paid the invoice, on a `paid` verdict. Null otherwise, and null when the
+    /// payment was assigned by hand (`matched_by` `operator` or `merchant`).
     pub payment: Option<QrisCheckPayment>,
     /// What the check did with the invoice's watch.
     pub watch: QrisWatch,

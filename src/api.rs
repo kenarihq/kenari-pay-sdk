@@ -416,8 +416,9 @@ impl Api {
     /// With [`CreateQrisInvoice::telegram`] the gateway also sends the QRIS to the buyer's chat
     /// through the merchant's own Telegram store bot, and answers `409 invalid_request` before
     /// making anything while the merchant has no connected bot (connect it in the portal). A send
-    /// never blocks or fails the invoice: read
-    /// [`QrisInvoice::telegram`](crate::wire::QrisInvoice::telegram) for what became of it.
+    /// never blocks or fails the invoice. The answer always says `pending`: a later
+    /// [`Api::qris_invoice`] says `sent` or `failed`. The send's result does not move `seq`, so the
+    /// feed shows it only when the invoice next changes.
     pub fn create_qris_invoice(&self, invoice: &CreateQrisInvoice) -> HttpRequest {
         self.post("/v1/qris/invoices", Some(json_body(invoice)))
     }
@@ -573,8 +574,12 @@ impl Api {
     /// [`Api::alipay_invoice`] and [`Api::subscription`], where the gateway saying there is no such object is an answer and
     /// not a failure.
     ///
-    /// Any 404 counts, including one from a proxy in front of the gateway. A merchant that is not
-    /// sure its base URL is right checks it with [`Api::networks`] at start up.
+    /// Any 404 counts, including one from a proxy in front of the gateway, or from a host that does
+    /// not serve the merchant routes (on live `https://pay.kenari.id`, the portal's host). A
+    /// merchant that is not sure its base URL is right checks it at start up with an authenticated
+    /// read of a feed it uses, [`Api::qris_invoices`] or [`Api::deposits`] with a limit of 1, and
+    /// [`Api::decode`]: a wrong host is an error there. [`Api::networks`] needs no key and also
+    /// answers on the portal's host, so it does not tell.
     pub fn decode_optional<T: DeserializeOwned>(
         status: u16,
         body: &[u8],
